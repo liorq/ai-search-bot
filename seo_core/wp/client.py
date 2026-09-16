@@ -186,10 +186,10 @@ class WordPressClient:
                 caps.blockers.append(f"אין הרשאת עריכה ל-{post_type}")
 
         # A PATCH to an unregistered `meta` returns 200 and discards the field,
-        # so the route description is the only honest way to know.
-        types = self._call("GET", f"{self.base_url}/wp-json/", params={"context": "help"})
+        # so the route description is the only honest way to know. The root
+        # index fetched above already carries it.
         for post_type in post_types:
-            caps.meta_exposed[post_type] = self._meta_is_exposed(types, post_type)
+            caps.meta_exposed[post_type] = self._meta_is_exposed(root, post_type)
             if not caps.meta_exposed[post_type]:
                 caps.blockers.append(
                     f"meta לא חשוף ב-REST עבור {post_type} — שינויי SEO לא יישמרו"
