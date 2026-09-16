@@ -1,0 +1,58 @@
+{
+  "_comment": "העתק ל-~/.claude/seo/clients.json והשלם. content_language הוא שפת הטקסט שנכתב לאתר הלקוח — לא שפת הממשק מולך, שהיא תמיד עברית.",
+
+  "denvergaragedoor.com": {
+    "market": "us",
+    "content_language": "en",
+    "gsc_property": "sc-domain:denvergaragedoor.com",
+
+    "cms": {
+      "type": "wordpress",
+      "base_url": "https://denvergaragedoor.com",
+      "username": "seo-bot",
+      "auth_env": "DGD_WP_APP_PASSWORD",
+      "staging_url": "https://staging.denvergaragedoor.com"
+    },
+
+    "ga4_property_id": "123456789",
+    "clarity_project_id": "",
+    "localo_project": "",
+    "gbp_location_id": "",
+
+    "conversions": ["phone_click", "form_submit"],
+    "conversion_value": 340.0,
+
+    "competitors": [
+      "competitor-one.com",
+      "competitor-two.com"
+    ],
+
+    "notes": "עונתיות חזקה בחורף. הטלפון הוא ההמרה העיקרית, לא הטופס."
+  },
+
+  "example-israel.co.il": {
+    "market": "il",
+    "content_language": "he",
+    "gsc_property": "sc-domain:example-israel.co.il",
+
+    "cms": {
+      "type": "manual",
+      "base_url": "https://example-israel.co.il",
+      "username": "",
+      "auth_env": "",
+      "staging_url": ""
+    },
+
+    "ga4_property_id": "",
+    "clarity_project_id": "",
+    "localo_project": "",
+    "gbp_location_id": "",
+
+    "conversions": ["whatsapp_click", "phone_click"],
+    "conversion_value": null,
+
+    "competitors": [],
+
+    "notes": "cms=manual — הסקילים יפיקו טקסט להדבקה ולא יכתבו לאתר."
+  }
+}

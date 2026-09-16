@@ -1,0 +1,25 @@
+# Credentials — never committed. See README "התקנה (חד-פעמי)".
+.env
+*.env
+!.env.example
+
+# The live client registry. Only the example is tracked.
+clients.json
+!clients.example.json
+
+# Per-client working data: snapshots, reports, change log, backups.
+data/
+reports/
+backups/
+*.wpress
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+
+# OS
+.DS_Store
