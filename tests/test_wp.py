@@ -431,3 +431,32 @@ def test_probe_falls_back_to_role_when_capabilities_are_hidden():
 )
 def test_slug_extraction(url, expected):
     assert _slug_from_url(url) == expected
+
+
+def test_an_empty_meta_value_hashes_the_same_as_an_absent_one():
+    """WordPress cannot unset a meta key over REST, so a restore writes "" where
+    the key had been absent. Hashing those differently makes every restored page
+    look like somebody else edited it."""
+    absent = wp_content.load({"id": 1, "content": {"raw": CLASSIC}, "meta": {}}, "pages")
+    empty = wp_content.load(
+        {"id": 1, "content": {"raw": CLASSIC}, "meta": {"_elementor_css": ""}}, "pages"
+    )
+    assert absent.data["content"].hash == empty.data["content"].hash
+
+
+def test_a_real_meta_change_still_moves_the_hash():
+    before = wp_content.load({"id": 1, "content": {"raw": CLASSIC}, "meta": {}}, "pages")
+    after = wp_content.load(
+        {"id": 1, "content": {"raw": CLASSIC}, "meta": {"_yoast_wpseo_title": "New"}}, "pages"
+    )
+    assert before.data["content"].hash != after.data["content"].hash
+
+
+def test_list_headings_reads_every_heading_in_order():
+    page = wp_content.load(gutenberg_post(), "pages").data["content"]
+    assert wp_content.list_headings(page) == ["Spring replacement cost"]
+
+
+def test_list_headings_walks_the_elementor_widget_tree():
+    page = wp_content.load(elementor_post(ELEMENTOR_TREE), "pages").data["content"]
+    assert wp_content.list_headings(page) == ["Spring replacement cost"]

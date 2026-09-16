@@ -49,6 +49,7 @@ from seo_core.schema import ChangeRecord, save_findings                 # noqa: 
 from seo_core.sources import gsc_source                                 # noqa: E402
 from seo_core.wp import backup as wp_backup                             # noqa: E402
 from seo_core.wp import content as wp_content                           # noqa: E402
+from seo_core.wp import rehearsal                                       # noqa: E402
 from seo_core.wp.client import WordPressClient                          # noqa: E402
 
 # ═══════════════════════════════════════════════════════
@@ -116,9 +117,15 @@ def self_check(domain: str) -> int:
     for blocker in caps.blockers:
         log(blocker, "WARN")
 
+    drilled = rehearsal.require(client.data_dir)
+    log(drilled.detail, "OK" if drilled else "WARN")
+
     rule()
-    if caps.can_write("page"):
+    if caps.can_write("page") and drilled:
         log("הכל מוכן", "OK")
+        return 0
+    if caps.can_write("page"):
+        log("יש הרשאת כתיבה, אבל חסרה חזרה גנרלית — פרסום ייחסם", "WARN")
         return 0
     log("אין הרשאת כתיבה — אפשר לנתח, אי אפשר לפרסם", "WARN")
     return 0
@@ -298,6 +305,13 @@ def publish(domain: str, plan_id: str) -> int:
         log(approved.detail, "ERR")
         return 1
     log("התוכנית מאושרת", "OK")
+
+    # אין כתיבה ראשונה לאתר חי לפני שמישהו הוכיח שאפשר לבטל אותה.
+    drilled = rehearsal.require(dirs["base"])
+    if not drilled:
+        log(drilled.detail, "ERR")
+        return 1
+    log(drilled.detail, "OK")
 
     wp = make_client(client)
     wp.probe()

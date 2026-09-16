@@ -63,8 +63,15 @@ class PostContent:
         Includes the Elementor tree, because on an Elementor page the tree is
         what changes while `post_content` sits still — the exact case a
         `modified_gmt` comparison misses.
+
+        Empty meta values are dropped first. WordPress cannot unset a meta key
+        over REST, so restoring a backup writes `""` where the key had been
+        absent; hashing those two states differently would make every restored
+        page look as though someone else had edited it.
         """
-        return content_hash(self.raw_content, self.elementor_tree, self.meta or {})
+        return content_hash(
+            self.raw_content, self.elementor_tree, _meaningful(self.meta)
+        )
 
     @property
     def plain_text(self) -> str:
@@ -73,6 +80,11 @@ class PostContent:
             parts = _collect_elementor_text(self.elementor_tree)
             return _strip_tags(" ".join(parts))
         return _strip_tags(self.raw_content)
+
+
+def _meaningful(meta: dict[str, Any] | None) -> dict[str, Any]:
+    """Meta with empty values removed — absent and empty are the same state."""
+    return {k: v for k, v in (meta or {}).items() if v not in ("", None, [])}
 
 
 # ═══════════════════════════════════════════════════════
@@ -274,6 +286,43 @@ def _place_after_heading_widget(
         ):
             return True
     return False
+
+
+def list_headings(content: PostContent) -> list[str]:
+    """Every heading on the page, in document order.
+
+    Used wherever a caller has to pick an insertion point without a human
+    naming one — the staging rehearsal, for instance, which needs any heading
+    at all rather than a particular one.
+    """
+    if content.builder == "elementor" and content.elementor_tree is not None:
+        return _collect_elementor_headings(content.elementor_tree)
+
+    return [
+        _normalise_display(_strip_tags(m.group(2)))
+        for m in re.finditer(r"<h([1-6])\b[^>]*>(.*?)</h\1>", content.raw_content, re.I | re.S)
+        if _strip_tags(m.group(2)).strip()
+    ]
+
+
+def _collect_elementor_headings(elements: list[dict[str, Any]]) -> list[str]:
+    found: list[str] = []
+    for element in elements:
+        if element.get("elType") == "widget" and element.get("widgetType") in (
+            "heading", "theme-post-title"
+        ):
+            title = _strip_tags(str((element.get("settings") or {}).get("title", "")))
+            if title.strip():
+                found.append(_normalise_display(title))
+        children = element.get("elements")
+        if isinstance(children, list):
+            found.extend(_collect_elementor_headings(children))
+    return found
+
+
+def _normalise_display(text: str) -> str:
+    """Collapse whitespace but keep the original casing, for display and matching."""
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _is_heading_widget(element: dict[str, Any], wanted: str) -> bool:
