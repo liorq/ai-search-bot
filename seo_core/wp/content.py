@@ -170,6 +170,135 @@ def insert_paragraph_after_heading(
     return _insert_classic(content, heading, paragraph)
 
 
+def insert_section_after_heading(
+    content: PostContent, after_heading: str, new_heading: str, paragraph: str
+) -> Result:
+    """Add a whole section — an H2 and its answer — after an existing heading.
+
+    Separate from `insert_paragraph_after_heading` because a query the page
+    never addresses needs a heading of its own to be found under; appending a
+    paragraph to somebody else's section buries it.
+    """
+    if not new_heading.strip() or not paragraph.strip():
+        return Result.failure("empty_section", "צריך גם כותרת וגם טקסט")
+
+    if content.builder == "elementor":
+        return _insert_elementor_section(content, after_heading, new_heading, paragraph)
+    if content.builder == "gutenberg":
+        return _insert_gutenberg_section(content, after_heading, new_heading, paragraph)
+    return _insert_classic_section(content, after_heading, new_heading, paragraph)
+
+
+def _insert_gutenberg_section(
+    content: PostContent, after_heading: str, new_heading: str, paragraph: str
+) -> Result:
+    blocks = _split_top_level_blocks(content.raw_content)
+    target = _find_block_with_heading(blocks, after_heading)
+    if target is None:
+        return Result.failure(
+            "heading_not_found", f"לא נמצאה כותרת {after_heading!r} בדף", recoverable=True
+        )
+
+    # The section is inserted after the target heading's own block *and* the
+    # content that belongs to it, so it does not split an existing answer.
+    end = _end_of_section(blocks, target)
+    blocks[end:end] = [
+        "<!-- wp:heading -->\n"
+        f"<h2>{_escape_body(new_heading)}</h2>\n"
+        "<!-- /wp:heading -->",
+        "<!-- wp:paragraph -->\n"
+        f"<p>{_escape_body(paragraph)}</p>\n"
+        "<!-- /wp:paragraph -->",
+    ]
+    return Result.success(
+        "composed",
+        f"סעיף {new_heading!r} יתווסף אחרי הסעיף של {after_heading!r}",
+        payload={"content": "\n\n".join(b for b in blocks if b.strip())},
+        inverse={"content": content.raw_content},
+        builder="gutenberg",
+    )
+
+
+def _end_of_section(blocks: list[str], start: int) -> int:
+    """Index just past the last block belonging to the heading at `start`."""
+    for index in range(start + 1, len(blocks)):
+        if "wp:heading" in blocks[index]:
+            return index
+    return len(blocks)
+
+
+def _insert_classic_section(
+    content: PostContent, after_heading: str, new_heading: str, paragraph: str
+) -> Result:
+    markup = content.raw_content
+    start = _find_classic_heading(markup, after_heading)
+    if start is None:
+        return Result.failure(
+            "heading_not_found", f"לא נמצאה כותרת {after_heading!r} בדף", recoverable=True
+        )
+
+    following = re.search(r"<h[1-6]\b", markup[start:], re.I)
+    insert_at = start + following.start() if following else len(markup)
+
+    section = (
+        f"\n<h2>{_escape_body(new_heading)}</h2>\n"
+        f"<p>{_escape_body(paragraph)}</p>\n"
+    )
+    return Result.success(
+        "composed",
+        f"סעיף {new_heading!r} יתווסף אחרי הסעיף של {after_heading!r}",
+        payload={"content": markup[:insert_at] + section + markup[insert_at:]},
+        inverse={"content": markup},
+        builder="classic",
+    )
+
+
+def _insert_elementor_section(
+    content: PostContent, after_heading: str, new_heading: str, paragraph: str
+) -> Result:
+    tree = json.loads(json.dumps(content.elementor_tree))     # deep copy
+
+    # Inserted in reverse, so the heading ends up above its own paragraph.
+    for widget in (_text_widget(paragraph), _heading_widget(new_heading)):
+        if not _place_after_heading_widget(tree, after_heading, widget):
+            return Result.failure(
+                "heading_not_found",
+                f"לא נמצא ווידג'ט כותרת {after_heading!r} בעץ של Elementor",
+                recoverable=True,
+            )
+
+    return Result.success(
+        "composed",
+        f"סעיף {new_heading!r} יתווסף אחרי {after_heading!r} באותה עמודה",
+        payload={
+            "meta": {
+                ELEMENTOR_DATA_KEY: json.dumps(tree, ensure_ascii=False),
+                ELEMENTOR_CSS_KEY: "",
+            }
+        },
+        inverse={
+            "meta": {
+                ELEMENTOR_DATA_KEY: json.dumps(
+                    content.elementor_tree, ensure_ascii=False
+                ),
+                ELEMENTOR_CSS_KEY: (content.meta or {}).get(ELEMENTOR_CSS_KEY, ""),
+            }
+        },
+        builder="elementor",
+        needs_css_regeneration=True,
+    )
+
+
+def _heading_widget(title: str) -> dict[str, Any]:
+    return {
+        "id": uuid.uuid4().hex[:7],
+        "elType": "widget",
+        "widgetType": "heading",
+        "settings": {"title": title, "header_size": "h2"},
+        "elements": [],
+    }
+
+
 def _insert_gutenberg(content: PostContent, heading: str, paragraph: str) -> Result:
     """Insert a valid paragraph block after the heading block."""
     blocks = _split_top_level_blocks(content.raw_content)

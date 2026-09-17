@@ -460,3 +460,77 @@ def test_list_headings_reads_every_heading_in_order():
 def test_list_headings_walks_the_elementor_widget_tree():
     page = wp_content.load(elementor_post(ELEMENTOR_TREE), "pages").data["content"]
     assert wp_content.list_headings(page) == ["Spring replacement cost"]
+
+
+# ═══════════════════════════════════════════════════════
+#  Whole sections — a heading and its answer
+# ═══════════════════════════════════════════════════════
+
+def test_a_gutenberg_section_lands_after_the_whole_previous_section():
+    """Inserting straight after the heading block would split its answer in two."""
+    page = wp_content.load(gutenberg_post(), "pages").data["content"]
+    result = wp_content.insert_section_after_heading(
+        page, "Spring replacement cost", "How long does it take?", "About two hours."
+    )
+    assert result
+    markup = result.data["payload"]["content"]
+    assert markup.index("Existing answer") < markup.index("How long does it take?")
+    assert "<!-- wp:heading -->" in markup
+    assert "<h2>How long does it take?</h2>" in markup
+
+
+def test_a_classic_section_lands_before_the_next_heading():
+    page = wp_content.load(classic_post(), "pages").data["content"]
+    result = wp_content.insert_section_after_heading(
+        page, "Spring replacement cost", "Warranty", "Ten years on parts."
+    )
+    assert result
+    markup = result.data["payload"]["content"]
+    assert markup.index("Existing answer") < markup.index("Warranty")
+    assert "<h2>Warranty</h2>" in markup
+
+
+def test_an_elementor_section_adds_a_heading_widget_above_its_text():
+    page = wp_content.load(elementor_post(ELEMENTOR_TREE), "pages").data["content"]
+    result = wp_content.insert_section_after_heading(
+        page, "Spring replacement cost", "Warranty", "Ten years on parts."
+    )
+    assert result
+    tree = json.loads(result.data["payload"]["meta"][wp_content.ELEMENTOR_DATA_KEY])
+    widgets = tree[0]["elements"][0]["elements"]
+    types = [w.get("widgetType") for w in widgets]
+
+    assert types.count("heading") == 2
+    assert types.index("heading", 1) < types.index("text-editor", 1)
+    assert widgets[types.index("heading", 1)]["settings"]["header_size"] == "h2"
+
+
+def test_an_elementor_section_writes_meta_and_never_post_content():
+    """post_content on an Elementor page is a dead copy nobody renders."""
+    page = wp_content.load(elementor_post(ELEMENTOR_TREE), "pages").data["content"]
+    payload = wp_content.insert_section_after_heading(
+        page, "Spring replacement cost", "Warranty", "Ten years."
+    ).data["payload"]
+    assert "content" not in payload
+    assert wp_content.ELEMENTOR_CSS_KEY in payload["meta"]
+
+
+def test_a_section_needs_both_a_heading_and_a_body():
+    page = wp_content.load(classic_post(), "pages").data["content"]
+    assert not wp_content.insert_section_after_heading(page, "Spring replacement cost", "", "x")
+    assert not wp_content.insert_section_after_heading(page, "Spring replacement cost", "x", " ")
+
+
+def test_a_section_after_a_heading_that_is_not_there_is_refused():
+    page = wp_content.load(classic_post(), "pages").data["content"]
+    result = wp_content.insert_section_after_heading(page, "Absent", "New", "Body")
+    assert not result
+    assert result.code == "heading_not_found"
+
+
+def test_the_inverse_of_a_section_restores_the_original_exactly():
+    page = wp_content.load(gutenberg_post(), "pages").data["content"]
+    result = wp_content.insert_section_after_heading(
+        page, "Spring replacement cost", "Warranty", "Ten years."
+    )
+    assert result.data["inverse"]["content"] == GUTENBERG

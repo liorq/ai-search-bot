@@ -158,7 +158,8 @@ python3 -m seo_core.wp.rehearsal --client example.com --status
 | ✅ בדיקות שחזור | `wp/rehearsal.py` — כתיבה, אימות, שחזור, השוואת hash |
 | ✅ מהירות | `wordpress-speed-optimizer` — PSI + CrUX, שדה מול מעבדה |
 | ✅ מיגרציה | `wordpress-migration` — מכונת מצבים, 500MB, בדיקות אחרי |
-| 📋 הבא | `conversion-tracking-audit` · `internal-anchors` · `ctr-titles` · השאר |
+| ✅ מיפוי שאילתות | `onpage-optimizer` — עקומת CTR מהאתר עצמו, קניבליזציה, פערי כיסוי |
+| 📋 הבא | `ctr-titles` · `internal-anchors` · `conversion-tracking-audit` · השאר |
 
 סדר הבנייה: תשתית → פיילוט אחד מלא → בדיקות שחזור → מהירות → מיגרציה → הרחבה.
 המטרה היא להוכיח שתהליך אחד עובד בבטחה מקצה לקצה לפני שמרחיבים.
