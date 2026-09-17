@@ -10,6 +10,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from seo_core.schema import Result  # noqa: E402
 from seo_core.sources import pagespeed  # noqa: E402
 
 URL = "https://x.com/services/repair"
@@ -346,3 +347,91 @@ def test_the_conversion_model_is_capped_so_it_cannot_outvote_measured_data():
     ceiling = 10_000 * 0.03 * pagespeed.MAX_CONVERSION_UPLIFT
     assert finding.impact_conversions <= ceiling
     assert "אומדן מודל ולא מדידה" in finding.impact_basis
+
+
+# ═══════════════════════════════════════════════════════
+#  Local Lighthouse — for sites PSI cannot reach
+# ═══════════════════════════════════════════════════════
+
+@pytest.mark.parametrize("url", [
+    "http://localhost:10003/services",
+    "http://127.0.0.1/",
+    "http://mysite.local/page",
+    "https://dev.test/",
+    "http://192.168.1.40/wp/",
+])
+def test_a_site_google_cannot_reach_is_recognised(url):
+    assert pagespeed.is_local(url) is True
+
+
+@pytest.mark.parametrize("url", ["https://example.com/", "https://sub.localhost.example.com/"])
+def test_a_public_site_is_not_treated_as_local(url):
+    assert pagespeed.is_local(url) is False
+
+
+class FakeRun:
+    """Stands in for the Lighthouse subprocess."""
+
+    def __init__(self, stdout="", stderr="", returncode=0):
+        self.stdout, self.stderr, self.returncode = stdout, stderr, returncode
+        self.command = None
+
+    def __call__(self, argv):
+        self.command = argv
+        return self
+
+
+def test_a_lighthouse_report_is_wrapped_into_the_psi_shape():
+    """Lighthouse prints exactly what PSI nests under lighthouseResult."""
+    report = json.dumps(psi()["lighthouseResult"])
+    result = pagespeed.fetch_local(URL, "mobile", runner=FakeRun(stdout=report))
+
+    assert result
+    parsed = pagespeed.parse(result.data["payload"], url=URL)
+    assert parsed
+    assert parsed.data["diagnosis"].lab.score == pytest.approx(42)
+
+
+def test_a_local_run_has_no_field_data_and_says_so():
+    """CrUX needs real visitors. A local site has none, and that is not a bug."""
+    report = json.dumps(psi()["lighthouseResult"])
+    payload = pagespeed.fetch_local(URL, "mobile", runner=FakeRun(stdout=report)).data["payload"]
+    diagnosis = pagespeed.parse(payload, url=URL).data["diagnosis"]
+
+    assert diagnosis.field.has_data is False
+    finding = pagespeed.to_finding(diagnosis, "x.com")
+    assert finding.confidence == "low"
+
+
+def test_the_desktop_run_uses_the_desktop_preset():
+    runner = FakeRun(stdout=json.dumps(psi()["lighthouseResult"]))
+    pagespeed.fetch_local(URL, "desktop", runner=runner)
+    assert "--preset=desktop" in runner.command
+
+
+def test_a_failed_lighthouse_run_reports_its_own_error():
+    result = pagespeed.fetch_local(
+        URL, "mobile", runner=FakeRun(stderr="Unable to connect to Chrome", returncode=1)
+    )
+    assert not result
+    assert "Unable to connect to Chrome" in result.detail
+
+
+def test_output_that_is_not_a_report_is_refused():
+    result = pagespeed.fetch_local(URL, "mobile", runner=FakeRun(stdout='{"ok": true}'))
+    assert not result
+    assert result.code == "lighthouse_bad_output"
+
+
+def test_measure_routes_a_local_url_away_from_the_api():
+    """Sending localhost to PSI wastes a call that could never have worked."""
+    calls = []
+    original = pagespeed.fetch_local
+    pagespeed.fetch_local = lambda url, strategy="mobile", runner=None: (
+        calls.append(url) or Result.success("fetched", "ok", payload={})
+    )
+    try:
+        pagespeed.measure("http://mysite.local/page", "mobile", api_key="k")
+    finally:
+        pagespeed.fetch_local = original
+    assert calls == ["http://mysite.local/page"]

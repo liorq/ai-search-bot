@@ -83,6 +83,10 @@ def self_check(domain: str) -> int:
         "OK" if has_key else "WARN",
     )
 
+    if pagespeed.is_local(client.cms.base_url):
+        log("האתר לוקאלי — יימדד עם Lighthouse מקומי, בלי צורך במפתח", "INFO")
+        log("דורש Node.js מותקן (npx)", "INFO")
+
     rule()
     log("הסקיל לא כותב לאתר — אבחון, תעדוף ואימות בלבד", "INFO")
     return 0
@@ -107,11 +111,18 @@ def gather(url: str, data_path: Path | None, live: bool, directory: Path) -> dic
         return None
 
     key = os.environ.get("PAGESPEED_API_KEY", "")
+    local = pagespeed.is_local(url)
+    if local:
+        log("כתובת לוקאלית — PageSpeed לא יכול להגיע אליה. "
+            "מודד עם Lighthouse מקומי (מעבדה בלבד, בלי נתוני שדה)", "INFO")
+    elif not key:
+        log("אין PAGESPEED_API_KEY — עובד, אבל ייחסם אחרי כמה בקשות", "WARN")
+
     raw: dict = {"url": url}
     diagnoses = {}
     for strategy in pagespeed.STRATEGIES:
         log(f"מודד {strategy}...", "WAIT")
-        fetched = pagespeed.fetch(url, strategy, key)
+        fetched = pagespeed.measure(url, strategy, key, local=local)
         if not fetched:
             log(fetched.detail, "ERR" if strategy == "mobile" else "WARN")
             if strategy == "mobile":

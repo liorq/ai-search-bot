@@ -23,6 +23,7 @@ from dataclasses import dataclass, field as dc_field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from ..schema import Finding, Result
 
@@ -525,6 +526,109 @@ def fetch(url: str, strategy: str = "mobile", api_key: str = "") -> Result:
         return Result.success("fetched", f"{strategy} נבדק", payload=response.json())
     except Exception:
         return Result.failure("psi_bad_payload", "התשובה מ-PageSpeed אינה JSON")
+
+
+# ═══════════════════════════════════════════════════════
+#  Local Lighthouse — the only option for a site PSI cannot reach
+# ═══════════════════════════════════════════════════════
+
+LIGHTHOUSE_TIMEOUT = 180     # שניות
+
+#: Flags that make a local run comparable to what PSI does, and headless so it
+#: does not steal focus. The throttling preset is PSI's own.
+_LIGHTHOUSE_FLAGS = (
+    "--output=json",
+    "--only-categories=performance",
+    "--quiet",
+    "--chrome-flags=--headless=new --no-sandbox",
+)
+
+_FORM_FACTOR = {
+    "mobile": ("--form-factor=mobile", "--screenEmulation.mobile"),
+    "desktop": ("--preset=desktop",),
+}
+
+
+def is_local(url: str) -> bool:
+    """Whether PSI could reach this URL at all.
+
+    A site on localhost or a `.local` domain is invisible to Google's servers,
+    so a PSI run against it fails no matter what key is supplied.
+    """
+    host = urlparse(url).hostname or ""
+    return (
+        host in ("localhost", "127.0.0.1", "::1", "0.0.0.0")
+        or host.endswith((".local", ".test", ".localhost"))
+        or host.startswith(("192.168.", "10.", "172.16."))
+    )
+
+
+def fetch_local(url: str, strategy: str = "mobile", runner: Any = None) -> Result:
+    """Run Lighthouse on this machine and return it in the PSI response shape.
+
+    Lighthouse prints the same report object that PSI nests under
+    `lighthouseResult`, so wrapping it lets the rest of this module treat a
+    local run and an API run identically.
+
+    What it cannot produce is field data. CrUX comes from real Chrome users,
+    and a site nobody has visited has none — so every finding from a local run
+    is lab-only and carries low confidence, which `to_finding` already says.
+    """
+    import json
+    import subprocess
+
+    command = [
+        "npx", "--yes", "lighthouse", url,
+        *_LIGHTHOUSE_FLAGS, *_FORM_FACTOR.get(strategy, ()),
+    ]
+    run = runner or (lambda argv: subprocess.run(
+        argv, capture_output=True, text=True, timeout=LIGHTHOUSE_TIMEOUT
+    ))
+
+    try:
+        done = run(command)
+    except FileNotFoundError:
+        return Result.failure(
+            "lighthouse_missing",
+            "לא נמצא npx. התקן Node.js — Lighthouse הוא הדרך היחידה למדוד "
+            "אתר לוקאלי, כי PageSpeed לא יכול להגיע אליו",
+            recoverable=True,
+        )
+    except Exception as exc:
+        return Result.failure("lighthouse_failed", f"Lighthouse נכשל: {exc}")
+
+    if done.returncode != 0:
+        detail = (done.stderr or done.stdout or "").strip()[:200]
+        return Result.failure("lighthouse_failed", f"Lighthouse החזיר שגיאה: {detail}")
+
+    try:
+        report = json.loads(done.stdout)
+    except json.JSONDecodeError:
+        return Result.failure(
+            "lighthouse_bad_output", "הפלט של Lighthouse אינו JSON תקין"
+        )
+
+    if "audits" not in report:
+        return Result.failure(
+            "lighthouse_bad_output", "הפלט של Lighthouse לא מכיל audits"
+        )
+
+    # Lighthouse 10 renamed finalUrl; keep both so the parser finds one.
+    report.setdefault("finalUrl", report.get("finalDisplayedUrl", url))
+    return Result.success(
+        "fetched", f"{strategy} נמדד מקומית", payload={"lighthouseResult": report}
+    )
+
+
+def measure(url: str, strategy: str = "mobile", api_key: str = "", local: bool = False) -> Result:
+    """Pick the right engine: local Lighthouse, or the PSI API.
+
+    A local URL is routed to Lighthouse automatically rather than being sent to
+    an API that cannot see it.
+    """
+    if local or is_local(url):
+        return fetch_local(url, strategy)
+    return fetch(url, strategy, api_key)
 
 
 # ═══════════════════════════════════════════════════════
