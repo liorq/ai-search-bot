@@ -26,11 +26,27 @@
 
 ## התקנה (חד-פעמי)
 
+**macOS / Linux**
+
 ```bash
 git clone <repo> && cd ai-search-bot
 pip install -r requirements.txt
 ./install.sh
 ```
+
+**Windows / PowerShell** — `&&` לא נתמך ב-PowerShell 5, ולכן כל פקודה בשורה
+נפרדת, ו-`install.sh` הוא סקריפט bash שלא ירוץ שם:
+
+```powershell
+git clone <repo>
+cd ai-search-bot
+py -3 -m pip install -r requirements.txt
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+`install.ps1` עושה את אותו הדבר, עם ההתאמות שהפלטפורמה דורשת: מאתר את
+הפייתון דרך ה-launcher, מגביל את ההרשאות לתיקיית הסודות דרך ACL במקום
+`chmod`, ויוצר junction בשולחן העבודה במקום symlink.
 
 ההתקנה מעתיקה את `seo_core` ל-`~/.claude/seo_core/`, את הסקילים ל-`~/.claude/skills/`,
 ויוצרת `~/.claude/seo/` עם `.env` ו-`clients.json` — שניהם **מחוץ לריפו** ולא נדרסים בהתקנה חוזרת.
@@ -51,11 +67,14 @@ pip install -r requirements.txt
 ```
 
 ההתקנה יוצרת **קיצור דרך בשולחן העבודה** בשם `SEO-Keys` שמצביע לשם — נוחות
-בלי להזיז את הקבצים עצמם לתיקייה שמסונכרנת לענן.
+בלי להזיז את הקבצים עצמם לתיקייה שמסונכרנת לענן. ב-Windows זה junction,
+ב-mac ולינוקס symlink.
 
 להזיז באמת: `SEO_HOME=/path/to/dir`. זה מזיז את שלושתם יחד, וכל `--self-check`
 מדפיס איפה הם יושבים ומתריע אם המקום בעייתי — תיקייה מסונכרנת (iCloud, Dropbox,
-OneDrive), שולחן עבודה, מאגר git, או `.env` שקריא למשתמשים אחרים במחשב.
+OneDrive), שולחן עבודה, מאגר git, או `.env` שקריא למשתמשים אחרים במחשב —
+הבדיקה האחרונה רצה רק היכן שיש הרשאות POSIX, כי ב-NTFS יש ACL ופייתון מדווח
+שם 0o666 קבוע לכל קובץ.
 
 **שולחן העבודה הוא לא מקום לסודות.** ברוב המחשבים הוא מסונכרן לענן, והוא מה
 שרואים בכל שיתוף מסך.

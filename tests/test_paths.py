@@ -91,12 +91,24 @@ def test_a_synced_location_says_the_keys_will_leave_the_machine(monkeypatch, tmp
 
 def test_a_world_readable_env_is_flagged(monkeypatch, tmp_path):
     """A WordPress password readable by every account on the machine."""
+    monkeypatch.setattr(paths, "uses_mode_bits", lambda: True)
     monkeypatch.setenv("SEO_HOME", str(tmp_path))
     env = tmp_path / ".env"
     env.write_text("LOCAL_WP_APP_PASSWORD=secret\n", encoding="utf-8")
     env.chmod(0o644)
 
     assert any("chmod 600" in p for p in paths.warnings_for())
+
+
+def test_windows_is_not_nagged_about_permissions_it_does_not_have(monkeypatch, tmp_path):
+    """Python reports a fixed 0o666 on Windows — checking it warns on every run."""
+    monkeypatch.setenv("SEO_HOME", str(tmp_path))
+    monkeypatch.setattr(paths, "uses_mode_bits", lambda: False)
+    env = tmp_path / ".env"
+    env.write_text("LOCAL_WP_APP_PASSWORD=secret\n", encoding="utf-8")
+    env.chmod(0o644)
+
+    assert paths.warnings_for() == []
 
 
 def test_a_correctly_locked_env_is_not_flagged(monkeypatch, tmp_path):

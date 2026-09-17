@@ -61,6 +61,16 @@ def desktop() -> Path | None:
     return None
 
 
+def uses_mode_bits() -> bool:
+    """Whether file permissions on this platform mean what POSIX says.
+
+    NTFS carries ACLs instead, and Python reports a fixed 0o666 for every file
+    on Windows — so checking the bits there would warn on every single run and
+    tell the user nothing true.
+    """
+    return os.name != "nt"
+
+
 def is_synced(path: Path) -> bool:
     """Whether this path sits inside a folder that replicates to a cloud."""
     text = str(path).lower()
@@ -90,7 +100,7 @@ def warnings_for(path: Path | None = None) -> list[str]:
         )
 
     secrets_file = target / ".env"
-    if secrets_file.exists():
+    if uses_mode_bits() and secrets_file.exists():
         mode = secrets_file.stat().st_mode
         if mode & (stat.S_IRGRP | stat.S_IROTH):
             problems.append(
