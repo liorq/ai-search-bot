@@ -37,20 +37,19 @@ for candidate in (
         sys.path.insert(0, str(candidate))
         break
 
-from seo_core import clients, secrets                                  # noqa: E402
+from seo_core import clients, paths, secrets                                  # noqa: E402
 from seo_core.change_guard import checks                                # noqa: E402
 from seo_core.log import banner, kv, log, rule                          # noqa: E402
 from seo_core.schema import save_findings                              # noqa: E402
 from seo_core.sources import pagespeed                                 # noqa: E402
 
-SEO_HOME     = Path.home() / ".claude" / "seo"
 MAX_STEPS    = 6          # כמה פריטים בפקודת העבודה
 METRIC_ICONS = {"lcp": "🖼️ ", "inp": "⚡", "cls": "📐"}
 EFFORT_LABEL = {"s": "קל", "m": "בינוני", "l": "כבד"}
 
 
 def client_dirs(domain: str) -> dict[str, Path]:
-    base = SEO_HOME / "data" / domain
+    base = paths.data_dir(domain)
     return {"base": base, "reports": base / "reports", "speed": base / "speed"}
 
 
@@ -75,6 +74,10 @@ def self_check(domain: str) -> int:
     log(f"לקוח {domain} נטען מהרישום", "OK")
     kv("שוק", client.market)
     kv("נתוני המרה", "כן" if client.has_conversion_data else "לא")
+
+    kv("מיקום המפתחות", paths.home())
+    for problem in paths.warnings_for():
+        log(problem, "WARN")
 
     has_key = bool(os.environ.get("PAGESPEED_API_KEY"))
     log(

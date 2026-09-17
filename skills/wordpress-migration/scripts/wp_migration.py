@@ -39,12 +39,11 @@ for candidate in (
         sys.path.insert(0, str(candidate))
         break
 
-from seo_core import clients, secrets                                  # noqa: E402
+from seo_core import clients, paths, secrets                                  # noqa: E402
 from seo_core.log import banner, kv, log, rule                          # noqa: E402
 from seo_core.wp import limits as wp_limits                             # noqa: E402
 from seo_core.wp import migration                                       # noqa: E402
 
-SEO_HOME     = Path.home() / ".claude" / "seo"
 CLI_TIMEOUT  = 1800       # שניות — ייצוא של אתר גדול לוקח זמן
 
 #: PHP שמחזיר את כל המגבלות בקריאה אחת, כולל דיסק פנוי.
@@ -61,7 +60,7 @@ LIMITS_SNIPPET = (
 
 
 def migrations_dir(domain: str) -> Path:
-    return SEO_HOME / "data" / domain / "migrations"
+    return paths.data_dir(domain) / "migrations"
 
 
 def runner(prefix: str):
@@ -135,6 +134,9 @@ def self_check(domain: str, source_cmd: str, target_cmd: str) -> int:
         return 1
     log(f"לקוח {domain} נטען מהרישום", "OK")
     kv("אתר", client.cms.base_url or "—")
+    kv("מיקום המפתחות", paths.home())
+    for problem in paths.warnings_for():
+        log(problem, "WARN")
 
     for label, prefix in (("מקור", source_cmd), ("יעד", target_cmd)):
         report = migration.detect_tooling(runner(prefix))

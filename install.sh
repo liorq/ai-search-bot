@@ -45,7 +45,10 @@ else
 fi
 
 # ── config ─────────────────────────────────────────────
+# 700 on the directory and 600 on the .env: nobody else with an account on this
+# machine should be able to read a client's WordPress password.
 mkdir -p "${SEO_DIR}/data"
+chmod 700 "${SEO_DIR}"
 
 if [[ ! -f "${SEO_DIR}/.env" ]]; then
   cp "${REPO_DIR}/.env.example" "${SEO_DIR}/.env"
@@ -60,6 +63,28 @@ if [[ ! -f "${SEO_DIR}/clients.json" ]]; then
   warn "נוצר ${SEO_DIR}/clients.json — צריך להשלים פרטי לקוחות"
 else
   ok "clients.json קיים — לא נדרס"
+fi
+
+# ── קיצור דרך בשולחן העבודה ────────────────────────────
+# הקבצים עצמם נשארים ב-${SEO_DIR}. שולחן העבודה מסונכרן לענן ברוב המחשבים,
+# ומופיע בכל שיתוף מסך — קיצור דרך נותן את הנוחות בלי להזיז את הסודות לשם.
+DESKTOP=""
+for candidate in "${HOME}/Desktop" "${HOME}/OneDrive/Desktop"; do
+  if [[ -d "${candidate}" ]]; then DESKTOP="${candidate}"; break; fi
+done
+
+if [[ -n "${DESKTOP}" ]]; then
+  LINK="${DESKTOP}/SEO-Keys"
+  if [[ -L "${LINK}" ]]; then
+    ok "קיצור דרך קיים: ${LINK}"
+  elif [[ -e "${LINK}" ]]; then
+    warn "${LINK} קיים ואינו קיצור דרך — לא נגעתי בו"
+  else
+    ln -s "${SEO_DIR}" "${LINK}"
+    ok "קיצור דרך נוצר: ${LINK} → ${SEO_DIR}"
+  fi
+else
+  info "לא נמצא שולחן עבודה — מדלג על קיצור הדרך"
 fi
 
 # ── בדיקת שפיות ────────────────────────────────────────
@@ -80,6 +105,9 @@ echo "  הגדרות:             ${SEO_DIR}"
 echo
 echo "  הצעד הבא:"
 echo "    1. מלא את ${SEO_DIR}/.env"
+if [[ -n "${DESKTOP}" ]]; then
+echo "       (או דרך הקיצור בשולחן העבודה: SEO-Keys)"
+fi
 echo "    2. השלם את ${SEO_DIR}/clients.json"
 echo "    3. הרץ סקיל עם --self-check"
 echo

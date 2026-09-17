@@ -349,7 +349,7 @@ def require(directory: Path, now: datetime | None = None) -> Result:
 # ═══════════════════════════════════════════════════════
 
 def main(argv: list[str] | None = None) -> int:
-    from .. import clients, secrets
+    from .. import clients, paths, secrets
     from ..log import banner, kv, log, rule
     from .client import WordPressClient
 
@@ -408,7 +408,10 @@ def main(argv: list[str] | None = None) -> int:
 
     banner(f"🧪 חזרה גנרלית — {args.client}")
     kv("אתר", base)
-    kv("דף", url)
+    kv("דף", args.url or "ייבחר אוטומטית")
+    kv("מיקום המפתחות", paths.home())
+    for problem in paths.warnings_for():
+        log(problem, "WARN")
     rule()
 
     outcome = run(wp, url, args.client, directory, heading=args.heading, fetch=fetch)

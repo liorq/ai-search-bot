@@ -24,9 +24,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import paths
 from .urls import is_local
 
-DEFAULT_REGISTRY = Path.home() / ".claude" / "seo" / "clients.json"
+#: Snapshot taken at import. `load_all` resolves the path freshly so that
+#: SEO_HOME relocates the registry, the .env and the per-client data
+#: together, whenever it happens to be set.
+DEFAULT_REGISTRY = paths.registry_path()
 
 #: DataForSEO location codes for the markets we actually serve.
 LOCATION_CODES = {"us": 2840, "il": 2376}
@@ -93,7 +97,7 @@ class Client:
 
     @property
     def data_dir(self) -> Path:
-        return Path.home() / ".claude" / "seo" / "data" / self.domain
+        return paths.data_dir(self.domain)
 
     def secret(self) -> str:
         """The CMS password, read from the environment at the moment of use.
@@ -170,7 +174,7 @@ def validate(client: Client) -> list[str]:
 
 
 def load_all(path: Path | None = None) -> dict[str, Client]:
-    registry = path or DEFAULT_REGISTRY
+    registry = path or paths.registry_path()
     if not registry.exists():
         raise ClientConfigError(
             f"לא נמצא רישום לקוחות ב-{registry}. "

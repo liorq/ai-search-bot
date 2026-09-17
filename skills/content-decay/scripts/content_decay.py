@@ -41,7 +41,7 @@ for candidate in (
         sys.path.insert(0, str(candidate))
         break
 
-from seo_core import clients, secrets                                  # noqa: E402
+from seo_core import clients, paths, secrets                                  # noqa: E402
 from seo_core.change_guard import checks, ledger, plan as plan_mod      # noqa: E402
 from seo_core.change_guard import risk, rollback                        # noqa: E402
 from seo_core.log import banner, kv, log, rule                          # noqa: E402
@@ -56,7 +56,6 @@ from seo_core.wp.client import WordPressClient                          # noqa: 
 #  הגדרות
 # ═══════════════════════════════════════════════════════
 
-SEO_HOME      = Path.home() / ".claude" / "seo"
 MAX_PER_RUN   = 10        # כמה ממצאים להציג בדוח
 CAUSE_ICONS   = {
     "position_loss": "📉", "seasonality": "🗓️ ", "serp_takeover": "⚔️ ",
@@ -65,7 +64,7 @@ CAUSE_ICONS   = {
 
 
 def client_dirs(domain: str) -> dict[str, Path]:
-    base = SEO_HOME / "data" / domain
+    base = paths.data_dir(domain)
     return {
         "base": base,
         "plans": base / "plans",
@@ -98,6 +97,10 @@ def self_check(domain: str) -> int:
     kv("שוק", client.market)
     kv("שפת התוכן", client.content_language)
     kv("נתוני המרה", "כן" if client.has_conversion_data else "לא — נדרג לפי קליקים")
+
+    kv("מיקום המפתחות", paths.home())
+    for problem in paths.warnings_for():
+        log(problem, "WARN")
 
     for key, present in secrets.available().items():
         log(f"{key}: {'קיים' if present else 'חסר'}", "OK" if present else "WARN")

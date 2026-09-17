@@ -18,7 +18,12 @@ import os
 import re
 from pathlib import Path
 
-ENV_PATH = Path.home() / ".claude" / "seo" / ".env"
+from . import paths
+
+#: Snapshot taken at import for anything that just wants a default to show.
+#: Functions resolve the path freshly instead, so SEO_HOME still applies
+#: when it is set after this module is imported.
+ENV_PATH = paths.env_path()
 
 #: Every credential the toolkit can use, and whether a run can proceed without
 #: it. Absent-but-optional degrades a skill; absent-but-required stops it.
@@ -59,7 +64,7 @@ def load_env(path: Path | None = None) -> dict[str, str]:
     Values already present in the environment win, so a one-off override on the
     command line behaves the way anyone would expect.
     """
-    env_file = path or ENV_PATH
+    env_file = path or paths.env_path()
     loaded: dict[str, str] = {}
     if not env_file.exists():
         return loaded
@@ -83,7 +88,7 @@ def require(*keys: str) -> None:
     if missing:
         lines = [f"  - {k}  ({KNOWN_KEYS.get(k, 'לא מתועד')})" for k in missing]
         raise SecretsError(
-            "חסרים מפתחות ב-" + str(ENV_PATH) + ":\n" + "\n".join(lines)
+            "חסרים מפתחות ב-" + str(paths.env_path()) + ":\n" + "\n".join(lines)
         )
 
 
