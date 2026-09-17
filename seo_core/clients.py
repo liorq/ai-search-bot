@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .urls import is_local
+
 DEFAULT_REGISTRY = Path.home() / ".claude" / "seo" / "clients.json"
 
 #: DataForSEO location codes for the markets we actually serve.
@@ -140,7 +142,9 @@ def validate(client: Client) -> list[str]:
     """Return human-readable problems. Empty list means the client is usable."""
     problems: list[str] = []
 
-    if not client.gsc_property:
+    # A development site can never have a Search Console property, so demanding
+    # one would block the rehearsal — the one thing a local site is for.
+    if not client.gsc_property and not is_local(client.cms.base_url):
         problems.append("חסר gsc_property — בלעדיו אין נתוני חיפוש")
     if client.market not in LOCATION_CODES:
         problems.append(

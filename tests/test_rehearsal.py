@@ -29,6 +29,8 @@ class FakeWP:
         self.silent_discard = silent_discard
         self.fail_on_call = fail_on_call        # 1 = the write, 2 = the restore
         self.writes = 0
+        self.located = None
+        self.pages = [self.post]
 
     def probe(self):
         if not self.writable:
@@ -40,7 +42,13 @@ class FakeWP:
                             meta_exposed={"page": True, "post": True})
 
     def find_by_url(self, url):
+        self.located = url
         return Result.success("found", "נמצא", payload=self.post, post_type="pages")
+
+    def list_posts(self, post_type="pages", per_page=20):
+        if not self.pages:
+            return Result.failure("no_posts", "לא נמצאו pages מפורסמים באתר")
+        return Result.success("listed", f"{len(self.pages)} pages", items=self.pages)
 
     def get_post(self, post_id, post_type="posts"):
         return Result.success("ok", "בוצע", payload=self.post)
@@ -281,3 +289,57 @@ def test_a_failed_elementor_restore_leaves_the_tree_modified_and_says_so(tmp_pat
     assert not result
     assert result.recoverable is False
     assert rehearsal.MARKER_PREFIX in wp.post["meta"][wp_content.ELEMENTOR_DATA_KEY]
+
+
+# ═══════════════════════════════════════════════════════
+#  Picking a target
+# ═══════════════════════════════════════════════════════
+
+ROOT = "http://my-site.local/"
+
+
+def test_a_bare_site_root_makes_the_drill_pick_a_page_itself(tmp_path):
+    """A site root has no slug to resolve, and the front page may not be a page."""
+    wp = FakeWP()
+    wp.post["link"] = "http://my-site.local/services/"
+
+    result = rehearsal.run(wp, ROOT, "my-site.local", tmp_path)
+
+    assert result, result.detail
+    assert wp.located is None                       # never tried to resolve "/"
+    assert result.data["rehearsal"].target_url == "http://my-site.local/services/"
+
+
+def test_a_named_page_is_still_resolved_by_its_url(tmp_path):
+    wp = FakeWP()
+    rehearsal.run(wp, "http://my-site.local/services/", "my-site.local", tmp_path)
+    assert wp.located == "http://my-site.local/services/"
+
+
+def test_a_site_with_no_published_pages_says_what_to_do(tmp_path):
+    wp = FakeWP()
+    wp.pages = []
+    result = rehearsal.run(wp, ROOT, "my-site.local", tmp_path)
+    assert not result
+    assert "--url" in result.detail
+
+
+def test_pages_without_headings_are_skipped_and_then_reported(tmp_path):
+    """The drill inserts after a heading, so a page with none is no use to it."""
+    wp = FakeWP()
+    wp.pages = [{"id": 3, "content": {"raw": "<p>No headings here.</p>"}, "meta": {}}]
+    result = rehearsal.run(wp, ROOT, "my-site.local", tmp_path)
+
+    assert not result
+    assert "כותרת H2" in result.detail
+
+
+def test_the_first_page_carrying_a_heading_is_chosen(tmp_path):
+    wp = FakeWP()
+    wp.pages = [
+        {"id": 3, "content": {"raw": "<p>Nothing.</p>"}, "meta": {}},
+        {"id": 4, "content": {"raw": CLASSIC}, "meta": {}, "link": "http://my-site.local/ok/"},
+    ]
+    result = rehearsal.run(wp, ROOT, "my-site.local", tmp_path)
+    assert result, result.detail
+    assert result.data["rehearsal"].target_url == "http://my-site.local/ok/"

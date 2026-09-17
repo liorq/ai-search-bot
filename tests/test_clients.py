@@ -10,7 +10,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from seo_core import secrets  # noqa: E402
+from seo_core import clients, secrets  # noqa: E402
 from seo_core.clients import (  # noqa: E402
     Client,
     ClientConfigError,
@@ -210,3 +210,42 @@ def test_require_names_the_missing_key(monkeypatch, tmp_path):
     monkeypatch.setattr(secrets, "ENV_PATH", tmp_path / "absent.env")
     with pytest.raises(secrets.SecretsError, match="PAGESPEED_API_KEY"):
         secrets.require("PAGESPEED_API_KEY")
+
+
+# ═══════════════════════════════════════════════════════
+#  A development site has no Search Console property
+# ═══════════════════════════════════════════════════════
+
+def local_registry(tmp_path, gsc_property=""):
+    path = tmp_path / "clients.json"
+    path.write_text(json.dumps({
+        "my-site.local": {
+            "gsc_property": gsc_property,
+            "cms": {
+                "type": "wordpress",
+                "base_url": "http://my-site.local",
+                "username": "admin",
+                "auth_env": "LOCAL_WP_APP_PASSWORD",
+            },
+        }
+    }, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def test_a_local_site_loads_without_a_search_console_property(tmp_path):
+    """Requiring one would block the rehearsal — the reason a local site exists."""
+    client = clients.load("my-site.local", local_registry(tmp_path))
+    assert client.cms.is_writable
+
+
+def test_a_public_site_still_needs_one(tmp_path):
+    path = tmp_path / "clients.json"
+    path.write_text(json.dumps({
+        "example.com": {
+            "gsc_property": "",
+            "cms": {"type": "wordpress", "base_url": "https://example.com",
+                    "username": "u", "auth_env": "X"},
+        }
+    }), encoding="utf-8")
+    with pytest.raises(clients.ClientConfigError, match="gsc_property"):
+        clients.load("example.com", path)

@@ -294,6 +294,24 @@ class WordPressClient:
 
         return self._call("POST", f"{self.api}/{post_type}/{post_id}", json=payload)
 
+    def list_posts(self, post_type: str = "pages", per_page: int = 20) -> Result:
+        """Recent posts of a type, newest first.
+
+        Used where a caller needs *a* page rather than a particular one — the
+        rehearsal, which only needs somewhere safe to write and undo.
+        """
+        result = self._call(
+            "GET",
+            f"{self.api}/{post_type}",
+            params={"per_page": per_page, "context": "edit", "status": "publish"},
+        )
+        if not result:
+            return result
+        items = result.data.get("payload") or []
+        if not items:
+            return Result.failure("no_posts", f"לא נמצאו {post_type} מפורסמים באתר")
+        return Result.success("listed", f"{len(items)} {post_type}", items=items)
+
     def list_revisions(self, post_id: int, post_type: str = "posts") -> Result:
         return self._call("GET", f"{self.api}/{post_type}/{post_id}/revisions")
 

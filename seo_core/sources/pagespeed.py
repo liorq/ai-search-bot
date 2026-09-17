@@ -23,9 +23,9 @@ from dataclasses import dataclass, field as dc_field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 from ..schema import Finding, Result
+from ..urls import is_local
 
 STRATEGIES = ("mobile", "desktop")
 
@@ -549,18 +549,6 @@ _FORM_FACTOR = {
 }
 
 
-def is_local(url: str) -> bool:
-    """Whether PSI could reach this URL at all.
-
-    A site on localhost or a `.local` domain is invisible to Google's servers,
-    so a PSI run against it fails no matter what key is supplied.
-    """
-    host = urlparse(url).hostname or ""
-    return (
-        host in ("localhost", "127.0.0.1", "::1", "0.0.0.0")
-        or host.endswith((".local", ".test", ".localhost"))
-        or host.startswith(("192.168.", "10.", "172.16."))
-    )
 
 
 def fetch_local(url: str, strategy: str = "mobile", runner: Any = None) -> Result:

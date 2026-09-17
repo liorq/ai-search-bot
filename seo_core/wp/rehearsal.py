@@ -112,12 +112,13 @@ def run(
     drill.steps.append(Step("probe", True, caps.summary()))
 
     # ── 2. טעינת הדף ──────────────────────────────────
-    found = wp.find_by_url(url)
-    if not found:
-        return fail("locate", found.detail)
-    post_type = found.data["post_type"]
+    located = _locate(wp, url)
+    if not located:
+        return fail("locate", located.detail)
+    post_type = located.data["post_type"]
+    drill.target_url = located.data.get("url", url)
 
-    loaded = wp_content.load(found.data["payload"], post_type)
+    loaded = wp_content.load(located.data["payload"], post_type)
     if not loaded:
         return fail("load", loaded.detail)
     page = loaded.data["content"]
@@ -219,6 +220,45 @@ def run(
     return Result.success("rehearsal_passed", drill.summary(), rehearsal=drill)
 
 
+def _locate(wp: Any, url: str) -> Result:
+    """Find the page to rehearse on.
+
+    A bare site root has no slug to resolve, and a WordPress front page may not
+    be a page at all, so rather than guessing at the homepage the drill asks
+    for any published page and takes the first one carrying a heading. Any page
+    proves the same thing: that a write can be made and undone.
+    """
+    from urllib.parse import urlparse
+
+    if urlparse(url).path.strip("/"):
+        found = wp.find_by_url(url)
+        if found:
+            found.data.setdefault("url", url)
+        return found
+
+    listed = wp.list_posts("pages")
+    if not listed:
+        return Result.failure(
+            "no_target",
+            f"{listed.detail}. ציין דף מפורש עם --url, למשל "
+            f"{url.rstrip('/')}/sample-page",
+        )
+
+    for item in listed.data["items"]:
+        loaded = wp_content.load(item, "pages")
+        if loaded and wp_content.list_headings(loaded.data["content"]):
+            return Result.success(
+                "found", "נבחר דף לחזרה",
+                payload=item, post_type="pages",
+                url=item.get("link") or url,
+            )
+
+    return Result.failure(
+        "no_target",
+        "אף דף באתר לא מכיל כותרת — צור דף עם כותרת H2, או ציין --url ו---heading",
+    )
+
+
 def _reread(wp: Any, post_id: int, post_type: str) -> Result:
     fresh = wp.get_post(post_id, post_type=post_type)
     if not fresh:
@@ -315,7 +355,7 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(description="Staging write/restore rehearsal")
     parser.add_argument("--client", required=True, help="דומיין הלקוח מ-clients.json")
-    parser.add_argument("--url", help="כתובת הדף לחזרה (ברירת מחדל: דף הבית ב-Staging)")
+    parser.add_argument("--url", help="כתובת הדף לחזרה (ברירת מחדל: דף כלשהו עם כותרת)")
     parser.add_argument("--heading", help="כותרת שאחריה תיכנס פסקת הסימון")
     parser.add_argument("--status", action="store_true", help="מציג את תוצאת החזרה האחרונה")
     parser.add_argument("--on-production", action="store_true",
