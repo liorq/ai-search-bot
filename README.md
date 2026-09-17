@@ -104,7 +104,7 @@ seo_core/
 ├─ secrets.py           .env + סורק דליפות
 ├─ sources/             GSC · GA4 · Clarity · PageSpeed · DataForSEO · crawl
 ├─ wp/                  REST · Gutenberg/Elementor · תוספי SEO · גיבוי · מגבלות
-│                      חזרה גנרלית · מיגרציה
+│                      חזרה גנרלית · מיגרציה · רענון תוסף SEO
 ├─ text/                טביעת קול · טבעיות · רוחב פיקסלים
 └─ change_guard/        ששת השערים ומדיניות השחזור
 skills/                 כל תיקייה הופכת לסקיל מותקן

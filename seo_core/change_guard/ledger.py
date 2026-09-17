@@ -110,6 +110,31 @@ def set_status(
     return Result.failure("not_found", f"שינוי {change_id} לא נמצא ביומן")
 
 
+def add_note(change_ids: list[str], note: str, directory: Path) -> Result:
+    """Append a note to one or more changes.
+
+    The log is the record of what was done to a page, and "somebody re-saved it
+    in the editor afterwards" belongs in it just as much as the write did.
+    """
+    changes = _read(directory)
+    if not changes:
+        return Result.failure("ledger_empty", "אין יומן שינויים ללקוח הזה")
+
+    wanted = set(change_ids)
+    touched = 0
+    for change in changes:
+        if change.get("change_id") in wanted:
+            change.setdefault("notes", []).append(note)
+            touched += 1
+
+    if not touched:
+        return Result.failure(
+            "not_found", f"אף אחד מהמזהים לא נמצא ביומן: {', '.join(sorted(wanted))}"
+        )
+    return Result.success("noted", f"{touched} שינויים עודכנו",
+                          path=str(_write(directory, changes)), count=touched)
+
+
 def due_checkpoints(directory: Path, now: datetime | None = None) -> list[dict[str, Any]]:
     """Changes with a measurement checkpoint that has come due.
 
