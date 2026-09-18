@@ -45,6 +45,7 @@ def self_check(domain: str) -> int:
 
     client = clients.load(domain)
     log(f"לקוח {domain} נטען מהרישום", "OK")
+    kv("שפת התוכן", client.content_language)
     kv("מיקום המפתחות", paths.home())
     for problem in paths.warnings_for():
         log(problem, "WARN")

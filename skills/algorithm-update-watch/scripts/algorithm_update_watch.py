@@ -123,7 +123,7 @@ def run(domain: str, before_path: Path, after_path: Path, window: str,
     if page_specific:
         print(f"\n  📄 דפים שירדו לבד — "
               f"{count(len(page_specific), 'דף אחד', 'דפים')}")
-        print(f"       עדכון אלגוריתם לא מפיל דף אחד ומשאיר את השאר")
+        print("       עדכון אלגוריתם לא מפיל דף אחד ומשאיר את השאר")
         for diagnosis in page_specific[:MAX_LISTED]:
             print(f"     {diagnosis.page.delta:>6} קליקים  {diagnosis.page.url}")
             print(f"           {diagnosis.page.describe()}")

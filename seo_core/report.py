@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .log import count, hours as hours_label
-from .schema import Finding, SEVERITIES
+from .schema import SEVERITIES
 from .sources.queries import REFERENCE_CTR
 
 #: The best click-through rate a page can realistically be held to. Taken

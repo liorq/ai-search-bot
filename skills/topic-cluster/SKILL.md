@@ -97,6 +97,37 @@ python scripts/topic_cluster.py --client example.com --show
 נושא הוא החלטת תוכן שדורשת קריאה של שני הדפים, ולכן האומדן תובע מחצית
 מהפער בלבד.
 
+## איך נראה קובץ המפה
+
+```json
+{
+  "client": "example.com",
+  "updated_at": "2026-09-18T10:19:01+00:00",
+  "runs": 3,
+  "clusters": {
+    "torsion-spring-door": {
+      "label": "torsion spring door",
+      "pillar": "https://example.com/services/springs",
+      "created_at": "2026-07-04T09:12:00+00:00",
+      "is_split": true,
+      "pages": {"https://example.com/services/springs": 8500,
+                "https://example.com/blog/spring-guide": 3900},
+      "queries": {
+        "torsion spring repair": {
+          "first_seen": "2026-07-04T09:12:00+00:00",
+          "last_seen": "2026-09-18T10:19:01+00:00",
+          "url": "https://example.com/services/springs",
+          "clicks": 210, "impressions": 3400, "position": 4.2
+        }
+      }
+    }
+  }
+}
+```
+
+`first_seen` שורד כל הרצה — הוא עונה על "מתי הנושא הזה הופיע לראשונה",
+שאלה שאי אפשר לשחזר בדיעבד משום ייצוא של GSC.
+
 ## דגשים חשובים
 
 **נושא הוא לפחות שלוש שאילתות.** שתיים זה לא נושא, זה זוג שאילתות, ואין לו

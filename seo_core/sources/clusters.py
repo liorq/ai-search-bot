@@ -40,7 +40,7 @@ from typing import Any, Iterable
 from ..log import count
 from ..schema import Finding, Result
 from .crawl import normalise
-from .queries import CTRCurve, MIN_IMPRESSIONS, QueryRow, _STOPWORDS, _WORD
+from .queries import CTRCurve, QueryRow, _STOPWORDS, _WORD
 
 MAP_FILE = "topic_map.json"
 

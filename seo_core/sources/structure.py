@@ -31,7 +31,7 @@ not converting into clicks, and even then it is ranked below the two facts.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Iterable
 
 from ..schema import Finding
 from .crawl import Crawl, Link, Trace, normalise

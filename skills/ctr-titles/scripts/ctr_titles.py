@@ -49,7 +49,7 @@ from seo_core.sources import queries as gsc                              # noqa:
 from seo_core.text import pixels, snippets                               # noqa: E402
 from seo_core.wp import backup as wp_backup                              # noqa: E402
 from seo_core.wp import content as wp_content                            # noqa: E402
-from seo_core.wp import seo_meta, seo_refresh                            # noqa: E402
+from seo_core.wp import seo_meta                                         # noqa: E402
 from seo_core.wp.client import WordPressClient                           # noqa: E402
 
 MAX_LISTED     = 12
@@ -173,7 +173,7 @@ def candidate_urls(rows: list[gsc.QueryRow]) -> list[str]:
 
 def analyze(domain: str, queries_path: Path, snippets_path: str | None,
             serp_path: str | None) -> int:
-    client = clients.load(domain)
+    clients.load(domain)          # מאמת שהלקוח מוגדר לפני שקוראים משהו
     dirs = client_dirs(domain)
 
     loaded = gsc.load_export(queries_path)

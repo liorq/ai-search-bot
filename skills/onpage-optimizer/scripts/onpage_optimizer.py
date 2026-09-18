@@ -45,8 +45,8 @@ from seo_core.schema import ChangeRecord, save_findings                  # noqa:
 from seo_core.sources import queries                                     # noqa: E402
 from seo_core.wp import backup as wp_backup                              # noqa: E402
 from seo_core.wp import content as wp_content                            # noqa: E402
-from seo_core.wp import seo_meta
 from seo_core.wp import rehearsal                                        # noqa: E402
+from seo_core.wp import seo_meta                                         # noqa: E402
 from seo_core.wp import seo_refresh                                      # noqa: E402
 from seo_core.wp.client import WordPressClient                           # noqa: E402
 
@@ -134,7 +134,7 @@ def load_crawl(path: str | None) -> dict[str, str]:
 
 
 def analyze(domain: str, queries_path: Path, crawl_path: str | None) -> int:
-    client = clients.load(domain)
+    clients.load(domain)          # מאמת שהלקוח מוגדר לפני שקוראים משהו
     dirs = client_dirs(domain)
 
     loaded = queries.load_export(queries_path)
@@ -208,8 +208,8 @@ def print_report(domain, opportunities, curve, path, window) -> None:
         else:
             print(f"    python onpage_optimizer.py --mode plan --client {domain} \\")
             print(f"        --url {top.url} \\")
-            print(f'        --after "<כותרת קיימת>" --heading "<כותרת חדשה>" '
-                  f"--text <קובץ>")
+            print('        --after "<כותרת קיימת>" --heading "<כותרת חדשה>" '
+                  "--text <קובץ>")
 
     print(f"\n  📄 ממצאים מלאים: {path}\n")
 
@@ -417,7 +417,7 @@ def publish(domain: str, plan_id: str) -> int:
             log(caveat, "INFO")
         print(f"\n    {client.cms.base_url.rstrip('/')}"
               f"/wp-admin/post.php?post={change_plan.post_id}&action=edit")
-        print(f"\n  רשימה מרוכזת של כל הדפים שממתינים:")
+        print("\n  רשימה מרוכזת של כל הדפים שממתינים:")
         print(f"    python -m seo_core.wp.seo_refresh --client {domain}")
     print()
     return 0

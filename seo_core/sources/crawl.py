@@ -35,7 +35,7 @@ import time
 from collections import Counter, deque
 from dataclasses import dataclass, field
 from html import unescape
-from typing import Callable, Iterable
+from typing import Callable
 from urllib.parse import urljoin, urlparse, urlunparse, parse_qsl, urlencode
 
 from ..schema import Result

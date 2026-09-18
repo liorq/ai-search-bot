@@ -426,7 +426,7 @@ def publish(domain: str, plan_id: str) -> int:
             log(caveat, "INFO")
         print(f"\n    {client.cms.base_url.rstrip('/')}"
               f"/wp-admin/post.php?post={change_plan.post_id}&action=edit")
-        print(f"\n  רשימה מרוכזת של כל הדפים שממתינים:")
+        print("\n  רשימה מרוכזת של כל הדפים שממתינים:")
         print(f"    python -m seo_core.wp.seo_refresh --client {domain}")
     print()
     return 0

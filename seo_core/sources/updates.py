@@ -30,7 +30,7 @@ import statistics
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Iterable
 
 from ..schema import Finding, Result
 from .crawl import normalise

@@ -19,14 +19,12 @@
 from __future__ import annotations
 
 import argparse
-import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from ..schema import Result
-from .seo_meta import FIELDS
 
 Runner = Callable[[list[str]], tuple[int, str, str]]
 
