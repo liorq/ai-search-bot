@@ -582,3 +582,37 @@ def test_cli_on_a_red_plan_demands_a_typed_confirmation(tmp_path, monkeypatch):
     monkeypatch.setattr("builtins.input", lambda *_: "כן")
     assert plan_mod.main(["approve", "plan_red", "--dir", str(tmp_path)]) == 0
     assert plan_mod.is_approved(red, tmp_path)
+
+
+class TestPlanContext:
+    def test_a_skill_can_carry_what_it_needs_into_publish(self, tmp_path):
+        """The link's target is not part of the payload, but publish has to
+        check it for a 404, and re-deriving it from a summary string is how a
+        rename becomes a silent failure."""
+        built = plan_mod.compose(
+            plan_id="plan_ctx", client="x.com", skill="internal-anchors",
+            url="https://x.com/a", post_id=3, post_type="pages",
+            builder="classic", summary="s", rationale="r",
+            payload={"content": "after"}, inverse={"content": "before"},
+            before_text="before", after_text="after", before_hash="h",
+            risk=risk.assess("", []),
+            context={"target": "https://x.com/b", "phrase": "springs"},
+        )
+        saved = built.data["plan"]
+        plan_mod.save(saved, tmp_path)
+
+        reloaded = plan_mod.load("plan_ctx", tmp_path).data["plan"]
+        assert reloaded.context["target"] == "https://x.com/b"
+
+    def test_context_does_not_change_the_approval_fingerprint(self):
+        def build(context):
+            return plan_mod.compose(
+                plan_id="plan_ctx", client="x.com", skill="s",
+                url="https://x.com/a", post_id=3, post_type="pages",
+                builder="classic", summary="s", rationale="r",
+                payload={"content": "after"}, inverse={"content": "before"},
+                before_text="before", after_text="after", before_hash="h",
+                risk=risk.assess("", []), context=context,
+            ).data["plan"]
+
+        assert build({}).fingerprint == build({"target": "https://x.com/b"}).fingerprint

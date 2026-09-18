@@ -51,6 +51,13 @@ class ChangePlan:
     protected_queries: list[str] = field(default_factory=list)
     findings: list[dict[str, Any]] = field(default_factory=list)
 
+    #: Anything the skill that wrote the plan needs back at publish time and
+    #: that is not part of the payload — the target of an internal link, for
+    #: instance, which has to be checked for a 404 after the write. Outside
+    #: the fingerprint on purpose: it describes the change, it is not the
+    #: change, so adding it cannot invalidate an approval.
+    context: dict[str, Any] = field(default_factory=dict)
+
     created_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
@@ -100,6 +107,7 @@ def compose(
     before_hash: str,
     risk: RiskReport,
     findings: list[Finding] | None = None,
+    context: dict[str, Any] | None = None,
 ) -> Result:
     """Build a plan. Refuses to propose a change that does nothing."""
     if not payload:
@@ -121,6 +129,7 @@ def compose(
         risk_level=risk.level, risk_reasons=list(risk.reasons),
         protected_queries=[q.query for q in risk.protected],
         findings=[f.to_dict() for f in (findings or [])],
+        context=dict(context or {}),
     )
     return Result.success("planned", f"תוכנית {plan_id} מוכנה לאישור", plan=plan)
 

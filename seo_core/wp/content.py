@@ -572,3 +572,177 @@ def _escape_body(text: str) -> str:
     if re.search(r"</?(a|strong|em|b|i|br)\b", text, re.I):
         return text
     return html.escape(text, quote=False)
+
+
+# ═══════════════════════════════════════════════════════
+#  Linking a phrase that is already on the page
+# ═══════════════════════════════════════════════════════
+
+#: Widget settings that hold rich text in an Elementor tree.
+_ELEMENTOR_TEXT_KEYS = ("editor", "text", "description_text")
+
+_TOKENS = re.compile(r"(<[^>]+>)")
+_HEADING_TAG = re.compile(r"</?h[1-6]\b", re.I)
+
+
+def _link_first_occurrence(markup: str, phrase: str, href: str) -> str | None:
+    """Wrap the first eligible occurrence of `phrase` in a link.
+
+    Eligible means in body text: not inside a tag's attributes, not inside an
+    anchor that already exists, and not inside a heading. Linking a heading
+    changes what the page is about; nesting an anchor produces markup no
+    browser agrees on; and matching inside an attribute would corrupt the page
+    outright.
+
+    Returns None when no eligible occurrence exists, so the caller can say so
+    instead of reporting a change that did not happen.
+    """
+    pattern = re.compile(rf"\b{re.escape(phrase)}\b", re.I | re.U)
+    tokens = _TOKENS.split(markup)
+
+    in_anchor = 0
+    in_heading = 0
+    for index, token in enumerate(tokens):
+        if index % 2:                                  # a tag
+            lowered = token.lower()
+            if lowered.startswith("<a") and not lowered.startswith("</a"):
+                in_anchor += 1
+            elif lowered.startswith("</a"):
+                in_anchor = max(0, in_anchor - 1)
+            elif _HEADING_TAG.match(token):
+                in_heading = 0 if lowered.startswith("</") else in_heading + 1
+            continue
+
+        if in_anchor or in_heading or not token.strip():
+            continue
+
+        match = pattern.search(token)
+        if not match:
+            continue
+
+        anchor = match.group(0)
+        tokens[index] = (
+            token[: match.start()]
+            + f'<a href="{href}">{anchor}</a>'
+            + token[match.end():]
+        )
+        return "".join(tokens)
+
+    return None
+
+
+def link_phrase(
+    content: PostContent, phrase: str, target_url: str
+) -> Result:
+    """Turn a phrase the page already says into a link to another page.
+
+    This is the safest internal link there is: the sentence was written by a
+    human, the phrase is already in it, and nothing is added or removed —
+    only wrapped. It is also idempotent, which matters more here than
+    elsewhere, because running a link-building pass twice on the same page is
+    the obvious way to end up with the same link twice in one paragraph.
+    """
+    if not phrase.strip():
+        return Result.failure("empty_phrase", "לא נמסר ביטוי לקישור")
+    if not target_url.strip():
+        return Result.failure("empty_target", "לא נמסרה כתובת יעד")
+
+    if content.builder == "elementor":
+        return _link_elementor(content, phrase, target_url)
+    return _link_markup(content, phrase, target_url)
+
+
+def _already_links(markup: str, target_url: str) -> bool:
+    return bool(re.search(
+        rf"""href\s*=\s*["']{re.escape(target_url)}/?["']""", markup, re.I))
+
+
+def _link_markup(content: PostContent, phrase: str, target_url: str) -> Result:
+    markup = content.raw_content
+    if _already_links(markup, target_url):
+        return Result.failure(
+            "already_linked",
+            f"הדף כבר מקשר ל-{target_url} — אין מה להוסיף",
+            recoverable=True,
+        )
+
+    updated = _link_first_occurrence(markup, phrase, target_url)
+    if updated is None:
+        return Result.failure(
+            "phrase_not_found",
+            f"הביטוי {phrase!r} לא נמצא בטקסט הגוף של הדף — "
+            "ייתכן שהוא רק בכותרת, בתפריט, או כבר בתוך קישור",
+            recoverable=True,
+        )
+
+    return Result.success(
+        "composed",
+        f"הביטוי {phrase!r} יקושר ל-{target_url}",
+        payload={"content": updated},
+        inverse={"content": markup},
+        builder=content.builder,
+    )
+
+
+def _link_elementor(content: PostContent, phrase: str, target_url: str) -> Result:
+    tree = json.loads(json.dumps(content.elementor_tree))      # deep copy
+    # Checked against the widgets' own text, not the serialised tree: JSON
+    # escaping puts a backslash before every quote, so a search for
+    # `href="..."` over the serialised form finds nothing and the skill adds
+    # a link the page already has.
+    existing = " ".join(_collect_elementor_text(tree))
+    if _already_links(existing, target_url):
+        return Result.failure(
+            "already_linked",
+            f"הדף כבר מקשר ל-{target_url} — אין מה להוסיף",
+            recoverable=True,
+        )
+
+    if not _link_in_widgets(tree, phrase, target_url):
+        return Result.failure(
+            "phrase_not_found",
+            f"הביטוי {phrase!r} לא נמצא בטקסט של אף ווידג'ט בעץ של Elementor",
+            recoverable=True,
+        )
+
+    return Result.success(
+        "composed",
+        f"הביטוי {phrase!r} יקושר ל-{target_url}",
+        payload={
+            "meta": {
+                ELEMENTOR_DATA_KEY: json.dumps(tree, ensure_ascii=False),
+                ELEMENTOR_CSS_KEY: "",
+            }
+        },
+        inverse={
+            "meta": {
+                ELEMENTOR_DATA_KEY: json.dumps(
+                    content.elementor_tree, ensure_ascii=False
+                ),
+                ELEMENTOR_CSS_KEY: (content.meta or {}).get(ELEMENTOR_CSS_KEY, ""),
+            }
+        },
+        builder="elementor",
+        needs_css_regeneration=True,
+    )
+
+
+def _link_in_widgets(
+    elements: list[dict[str, Any]], phrase: str, target_url: str
+) -> bool:
+    """Link the phrase in the first text widget that carries it."""
+    for element in elements:
+        settings = element.get("settings") or {}
+        for key in _ELEMENTOR_TEXT_KEYS:
+            value = settings.get(key)
+            if not isinstance(value, str) or not value.strip():
+                continue
+            updated = _link_first_occurrence(value, phrase, target_url)
+            if updated is not None:
+                settings[key] = updated
+                return True
+
+        children = element.get("elements")
+        if isinstance(children, list) and _link_in_widgets(children, phrase, target_url):
+            return True
+    return False
