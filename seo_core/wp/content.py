@@ -746,3 +746,111 @@ def _link_in_widgets(
         if isinstance(children, list) and _link_in_widgets(children, phrase, target_url):
             return True
     return False
+
+
+# ═══════════════════════════════════════════════════════
+#  Pointing an existing link somewhere else
+# ═══════════════════════════════════════════════════════
+
+def retarget_link(content: PostContent, old_url: str, new_url: str) -> Result:
+    """Repoint every link to `old_url` at `new_url`, changing nothing else.
+
+    This is what a redirect chain costs to clean up: the link text stays, the
+    sentence stays, only the destination moves to where the redirect was
+    sending the visitor anyway. Mechanical, reversible, and tedious enough by
+    hand that it never gets done.
+
+    Both the bare URL and its trailing-slash form are matched, because a
+    theme and an editor rarely agree on which one to write.
+    """
+    if not old_url.strip() or not new_url.strip():
+        return Result.failure("empty_url", "צריך גם כתובת ישנה וגם חדשה")
+    if old_url.strip() == new_url.strip():
+        return Result.failure("same_url", "הכתובת הישנה והחדשה זהות")
+
+    if content.builder == "elementor":
+        return _retarget_elementor(content, old_url, new_url)
+
+    updated, count = _replace_href(content.raw_content, old_url, new_url)
+    if not count:
+        return Result.failure(
+            "link_not_found",
+            f"לא נמצא קישור ל-{old_url} בגוף הדף",
+            recoverable=True,
+        )
+    return Result.success(
+        "composed",
+        f"{count} קישורים יופנו מ-{old_url} ל-{new_url}",
+        payload={"content": updated},
+        inverse={"content": content.raw_content},
+        builder=content.builder, links_changed=count,
+    )
+
+
+def _href_pattern(url: str) -> re.Pattern[str]:
+    return re.compile(
+        rf"""(href\s*=\s*["']){re.escape(url.rstrip('/'))}/?(["'])""", re.I)
+
+
+def _replace_href(markup: str, old_url: str, new_url: str) -> tuple[str, int]:
+    return _href_pattern(old_url).subn(rf"\g<1>{new_url}\g<2>", markup)
+
+
+def _retarget_elementor(content: PostContent, old_url: str, new_url: str) -> Result:
+    tree = json.loads(json.dumps(content.elementor_tree))      # deep copy
+    count = _retarget_in_widgets(tree, old_url, new_url)
+    if not count:
+        return Result.failure(
+            "link_not_found",
+            f"לא נמצא קישור ל-{old_url} בעץ של Elementor",
+            recoverable=True,
+        )
+
+    return Result.success(
+        "composed",
+        f"{count} קישורים יופנו מ-{old_url} ל-{new_url}",
+        payload={
+            "meta": {
+                ELEMENTOR_DATA_KEY: json.dumps(tree, ensure_ascii=False),
+                ELEMENTOR_CSS_KEY: "",
+            }
+        },
+        inverse={
+            "meta": {
+                ELEMENTOR_DATA_KEY: json.dumps(
+                    content.elementor_tree, ensure_ascii=False),
+                ELEMENTOR_CSS_KEY: (content.meta or {}).get(ELEMENTOR_CSS_KEY, ""),
+            }
+        },
+        builder="elementor", links_changed=count,
+        needs_css_regeneration=True,
+    )
+
+
+def _retarget_in_widgets(node: Any, old_url: str, new_url: str) -> int:
+    """Walk the whole tree, repointing hrefs in text and in link settings.
+
+    Elementor keeps a button's destination in `settings.link.url`, not in any
+    markup, so a search for `href=` alone would leave every button pointing at
+    the redirect.
+    """
+    changed = 0
+    bare = old_url.rstrip("/")
+
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "url" and isinstance(value, str) and value.rstrip("/") == bare:
+                node[key] = new_url
+                changed += 1
+            elif isinstance(value, str) and "href" in value.lower():
+                replaced, count = _replace_href(value, old_url, new_url)
+                if count:
+                    node[key] = replaced
+                    changed += count
+            else:
+                changed += _retarget_in_widgets(value, old_url, new_url)
+    elif isinstance(node, list):
+        for item in node:
+            changed += _retarget_in_widgets(item, old_url, new_url)
+
+    return changed

@@ -638,3 +638,53 @@ class TestLinkPhrase:
         )
         assert wp_content.link_phrase(page, "torsion spring", "https://x.com/s").code \
             == "already_linked"
+
+
+class TestRetargetLink:
+    def test_every_link_to_the_old_url_moves_and_the_text_stays(self):
+        page = wp_content.PostContent(
+            post_id=7, post_type="pages", builder="classic",
+            raw_content='<p><a href="https://x.com/old">Springs</a> and '
+                        '<a href="https://x.com/old/">again</a>.</p>')
+        result = wp_content.retarget_link(page, "https://x.com/old",
+                                          "https://x.com/new")
+
+        assert result.data["links_changed"] == 2
+        markup = result.data["payload"]["content"]
+        assert "https://x.com/old" not in markup
+        assert ">Springs<" in markup and ">again<" in markup
+
+    def test_a_page_with_no_such_link_says_so(self):
+        page = wp_content.PostContent(
+            post_id=7, post_type="pages", builder="classic",
+            raw_content='<p><a href="/other">x</a></p>')
+        assert wp_content.retarget_link(
+            page, "https://x.com/old", "https://x.com/new").code == "link_not_found"
+
+    def test_the_same_url_twice_is_refused_rather_than_written(self):
+        page = wp_content.PostContent(
+            post_id=7, post_type="pages", builder="classic",
+            raw_content='<a href="https://x.com/old">x</a>')
+        assert not wp_content.retarget_link(page, "https://x.com/old",
+                                            "https://x.com/old")
+
+    def test_an_elementor_button_destination_is_moved_too(self):
+        """A button keeps its URL in settings.link.url, not in any markup."""
+        page = wp_content.PostContent(
+            post_id=7, post_type="pages", builder="elementor", raw_content="",
+            elementor_tree=[{
+                "id": "a1", "elType": "widget", "widgetType": "button",
+                "settings": {"link": {"url": "https://x.com/old", "is_external": ""}},
+                "elements": [],
+            }, {
+                "id": "a2", "elType": "widget", "widgetType": "text-editor",
+                "settings": {"editor": '<a href="https://x.com/old">t</a>'},
+                "elements": [],
+            }])
+        result = wp_content.retarget_link(page, "https://x.com/old",
+                                          "https://x.com/new")
+
+        assert result.data["links_changed"] == 2
+        tree = json.loads(result.data["payload"]["meta"][wp_content.ELEMENTOR_DATA_KEY])
+        assert tree[0]["settings"]["link"]["url"] == "https://x.com/new"
+        assert "https://x.com/new" in tree[1]["settings"]["editor"]

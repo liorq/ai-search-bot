@@ -424,18 +424,87 @@ def crawl(
     return result
 
 
-def requests_fetcher(timeout: int = DEFAULT_TIMEOUT) -> Fetcher:
-    """The real fetcher, kept out of the crawl so tests never touch a network."""
+def requests_fetcher(timeout: int = DEFAULT_TIMEOUT, *, follow: bool = True) -> Fetcher:
+    """The real fetcher, kept out of the crawl so tests never touch a network.
+
+    `follow=False` returns each redirect as itself rather than its
+    destination, which is what `trace` needs to count hops.
+    """
     import requests
 
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
 
     def fetch(url: str) -> tuple[int, str, str]:
-        response = session.get(url, timeout=timeout, allow_redirects=True)
+        response = session.get(url, timeout=timeout, allow_redirects=follow)
+        if not follow and response.is_redirect:
+            target = response.headers.get("Location", "")
+            return response.status_code, "", normalise(target, url)
         return response.status_code, response.text, response.url
 
     return fetch
+
+
+MAX_HOPS = 10
+
+
+@dataclass
+class Trace:
+    """One URL's redirect chain, followed a hop at a time."""
+
+    chain: list[str]
+    status: int = 0
+    looped: bool = False
+    truncated: bool = False
+
+    @property
+    def hops(self) -> int:
+        return max(0, len(self.chain) - 1)
+
+    @property
+    def destination(self) -> str:
+        return self.chain[-1]
+
+    def describe(self) -> str:
+        if self.looped:
+            return f"לולאת הפניות: {' → '.join(self.chain[-3:])}"
+        if self.truncated:
+            return f"יותר מ-{MAX_HOPS} הפניות ברצף — לא הגענו ליעד"
+        if self.hops == 0:
+            return "אין הפניה"
+        if self.hops == 1:
+            return f"הפניה אחת אל {self.destination}"
+        return f"{self.hops} הפניות ברצף אל {self.destination}"
+
+
+def trace(url: str, fetch: Fetcher, max_hops: int = MAX_HOPS) -> Trace:
+    """Follow a redirect one hop at a time, so the chain can be counted.
+
+    A fetcher that follows redirects itself hands back the destination and
+    nothing else, and "this URL redirects" is a very different finding from
+    "this URL redirects four times through two domains". Only run against
+    URLs already known to redirect — it costs one request per hop.
+    """
+    chain = [normalise(url)]
+    status = 0
+
+    for _ in range(max_hops):
+        try:
+            status, _html, target = fetch(chain[-1])
+        except Exception:
+            return Trace(chain, status=0)
+
+        if not (300 <= status < 400):
+            return Trace(chain, status=status)
+
+        target = normalise(target)
+        if not target:
+            return Trace(chain, status=status)
+        if target in chain:
+            return Trace(chain + [target], status=status, looped=True)
+        chain.append(target)
+
+    return Trace(chain, status=status, truncated=True)
 
 
 def load_robots(root: str, fetch: Fetcher) -> str:
