@@ -181,11 +181,11 @@ python3 -m seo_core.wp.rehearsal --client example.com --status
 | ✅ מדידה | `conversion-tracking-audit` — מה הדף מוכיח, ומה רק GTM יודע |
 | ✅ נושאים | `topic-cluster` — קיבוץ לפי הדף שגוגל בחר, ומפה שנשמרת |
 | ✅ עדכונים | `algorithm-update-watch` — האתר מול עצמו, ורק אז לוח השנה |
-| ⛔ חסום | 6 סקילים שדורשים מקורות נתונים שעוד לא מחוברים — ראו למטה |
+| ⛔ חסום | 7 סקילים שדורשים מקורות נתונים שעוד לא מחוברים — ראו למטה |
 
 ### מה חסום, ולמה
 
-שישה סקילים מהתוכנית לא נבנו, וכולם מאותה סיבה: הם צורכים מקור נתונים
+שבעה סקילים מהתוכנית לא נבנו, וכולם מאותה סיבה: הם צורכים מקור נתונים
 שאינו מחובר לסביבה הזו, ולכתוב אותם עכשיו פירושו לכתוב מול ממשק שלא נראה.
 
 | הסקיל | מה חסר |
@@ -194,7 +194,7 @@ python3 -m seo_core.wp.rehearsal --client example.com --status
 | `competitor-cta` · `link-gap-prospector` | DataForSEO / Semrush |
 | `gbp-local-optimizer` · `reviews-engine` | Localo MCP, וגם החלטה אם מותר לכתוב ל-GBP |
 | `lead-quality-loop` | מקור לידים מה-CRM של הלקוח |
-| `ai-visibility` | חלקו אפשרי מהסריקה, חלקו דורש שאילתות למודלים |
+| `ai-visibility` | חלקו אפשרי מהסריקה (llms.txt, GPTBot, JSON-LD), חלקו דורש שאילתות למודלים |
 
 `sources/ga4.py` נשאר ריק מאותה סיבה — `conversion-tracking-audit` עובד
 בינתיים מה-HTML ומהשוואת קליקים מול סשנים, בלי גישת API.
