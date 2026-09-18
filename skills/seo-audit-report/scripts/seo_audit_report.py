@@ -116,7 +116,7 @@ def run(domain: str, out: str | None, ceiling: float | None,
 
     unknown = [p for p in portfolio.pages if p.headroom is None]
     if unknown:
-        log(f"{len(unknown)} דפים בלי נתוני הופעות — האומדן שלהם לא מוגבל בתקרה",
+        log(f"{count(len(unknown), 'דף אחד', 'דפים')} בלי נתוני הופעות — האומדן לא מוגבל בתקרה",
             "WARN")
 
     document = report.render_markdown(portfolio, buckets)

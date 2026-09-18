@@ -28,6 +28,8 @@ ENV_PATH = paths.env_path()
 #: Every credential the toolkit can use, and whether a run can proceed without
 #: it. Absent-but-optional degrades a skill; absent-but-required stops it.
 KNOWN_KEYS: dict[str, str] = {
+    # Declared so --self-check can show whether it is set. Nothing in the
+    # repo consumes it today: no code here calls GSC Wizard.
     "GSC_WIZARD_API_KEY":   "GSC Wizard MCP — נתוני Search Console",
     "DATAFORSEO_LOGIN":     "DataForSEO — תוצאות SERP",
     "DATAFORSEO_PASSWORD":  "DataForSEO — תוצאות SERP",

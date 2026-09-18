@@ -199,5 +199,11 @@ python3 -m seo_core.wp.rehearsal --client example.com --status
 `sources/ga4.py` נשאר ריק מאותה סיבה — `conversion-tracking-audit` עובד
 בינתיים מה-HTML ומהשוואת קליקים מול סשנים, בלי גישת API.
 
+**והפער הגדול ביותר הוא Search Console עצמו.** שישה סקילים דורשים ייצוא
+שאילתות (`--queries` / `--gsc-data`), ושום רכיב בריפו או במחשב לא מייצר אותו:
+אין בקוד אף קריאה ל-GSC Wizard, `GSC_WIZARD_API_KEY` מוכרז ולא נצרך, ו-
+`gsc-crawl-checker` המותקן מחזיר סטטוס אינדוקס בלבד. המיפוי מול GSC Wizard
+והחלטה על מקור הנתונים — ב-`docs/gsc-wizard-overlap.md`.
+
 סדר הבנייה: תשתית → פיילוט אחד מלא → בדיקות שחזור → מהירות → מיגרציה → הרחבה.
 המטרה היא להוכיח שתהליך אחד עובד בבטחה מקצה לקצה לפני שמרחיבים.
