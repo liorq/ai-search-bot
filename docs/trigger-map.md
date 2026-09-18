@@ -17,6 +17,9 @@
 
 ארבעה סקילים כבר מותקנים. התיאורים שלהם צריכים חידוד כדי שלא יבלעו טריגרים של החדשים.
 
+**הנוסח המלא להדבקה נמצא ב-[`existing-skills-descriptions.md`](existing-skills-descriptions.md).**
+הסקילים האלה לא נמצאים בריפו — הם ב-`~/.claude/skills/` — ולכן ההחלפה ידנית.
+
 | סקיל | עוגנים ייחודיים | מה **להסיר** מהתיאור |
 |---|---|---|
 | `gsc-crawl-checker` | sitemap · לא נסרק · לא מאונדקס · request indexing · URL Inspection · כיסוי | — (יורחב ל-IndexNow ו-Bing בשדרוג) |

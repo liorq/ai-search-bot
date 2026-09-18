@@ -110,6 +110,7 @@ seo_core/
 └─ change_guard/        ששת השערים ומדיניות השחזור
 skills/                 כל תיקייה הופכת לסקיל מותקן
 docs/trigger-map.md     מי נטען מתי — נקרא לפני הוספת סקיל
+docs/existing-skills-descriptions.md  נוסח להדבקה לארבעת הסקילים הקיימים
 tests/                  pytest offline, בלי רשת ובלי עלות
 ```
 
