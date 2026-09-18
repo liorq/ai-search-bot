@@ -15,7 +15,7 @@ before anyone concludes the change did nothing.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -175,3 +175,24 @@ def complete_checkpoint(
                 )
         return Result.failure("no_checkpoint", f"אין נקודת מדידה ביום {day}")
     return Result.failure("not_found", f"שינוי {change_id} לא נמצא ביומן")
+
+
+def applied_between(directory: Path, start: date, end: date) -> list[dict[str, Any]]:
+    """Every change written to the live site inside a date window.
+
+    The control that matters when traffic drops. Before an algorithm update
+    is blamed for anything, the first question is what *we* changed in the
+    same weeks — and that answer has been sitting in this file the whole time.
+    """
+    found: list[dict[str, Any]] = []
+    for change in _read(directory):
+        stamp = change.get("applied_at")
+        if not stamp or change.get("status") == "planned":
+            continue
+        try:
+            applied = datetime.fromisoformat(stamp).date()
+        except ValueError:
+            continue
+        if start <= applied <= end:
+            found.append(change)
+    return sorted(found, key=lambda c: c["applied_at"])

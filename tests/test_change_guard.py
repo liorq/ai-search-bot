@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -616,3 +616,41 @@ class TestPlanContext:
             ).data["plan"]
 
         assert build({}).fingerprint == build({"target": "https://x.com/b"}).fingerprint
+
+
+class TestLedgerWindow:
+    def _record(self, tmp_path, change_id: str, when: str, url: str,
+                status: str = "applied"):
+        record = ChangeRecord(
+            change_id=change_id, plan_id="p", skill="content-decay",
+            client="x.com", url=url, post_id=1, before_hash="h",
+            inverse={"content": "before"}, backup_ref="b", backup_verified=True,
+            status=status,
+            applied_at=datetime.fromisoformat(when),
+        )
+        ledger.record(record, tmp_path)
+
+    def test_only_changes_inside_the_window_come_back(self, tmp_path):
+        """Before blaming an update, the first question is what we changed."""
+        self._record(tmp_path, "chg_in", "2025-03-18T10:00:00+00:00",
+                     "https://x.com/a")
+        self._record(tmp_path, "chg_out", "2025-01-02T10:00:00+00:00",
+                     "https://x.com/b")
+
+        found = ledger.applied_between(tmp_path, date(2025, 3, 1), date(2025, 4, 15))
+        assert [c["change_id"] for c in found] == ["chg_in"]
+
+    def test_the_window_edges_are_included(self, tmp_path):
+        self._record(tmp_path, "chg_edge", "2025-03-01T00:30:00+00:00",
+                     "https://x.com/a")
+        assert ledger.applied_between(tmp_path, date(2025, 3, 1), date(2025, 3, 1))
+
+    def test_a_plan_that_was_never_written_is_not_a_change(self, tmp_path):
+        self._record(tmp_path, "chg_planned", "2025-03-18T10:00:00+00:00",
+                     "https://x.com/a", status="planned")
+        assert ledger.applied_between(tmp_path, date(2025, 3, 1),
+                                      date(2025, 4, 15)) == []
+
+    def test_an_empty_ledger_is_not_an_error(self, tmp_path):
+        assert ledger.applied_between(tmp_path, date(2025, 3, 1),
+                                      date(2025, 4, 15)) == []
