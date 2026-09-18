@@ -28,6 +28,8 @@ ENV_PATH = paths.env_path()
 #: Every credential the toolkit can use, and whether a run can proceed without
 #: it. Absent-but-optional degrades a skill; absent-but-required stops it.
 KNOWN_KEYS: dict[str, str] = {
+    # Declared so --self-check can show whether it is set. Nothing in the
+    # repo consumes it today: no code here calls GSC Wizard.
     "GSC_WIZARD_API_KEY":   "GSC Wizard MCP — נתוני Search Console",
     "DATAFORSEO_LOGIN":     "DataForSEO — תוצאות SERP",
     "DATAFORSEO_PASSWORD":  "DataForSEO — תוצאות SERP",
@@ -101,12 +103,12 @@ def available() -> dict[str, bool]:
 def scan_for_leaks(root: Path) -> list[tuple[Path, int, str]]:
     """Find credentials committed into source. Returns (file, line, reason)."""
     hits: list[tuple[Path, int, str]] = []
-    # `tests` and `fixtures` are excluded on purpose: that is exactly where
-    # fake credentials belong, including the ones proving this scanner works.
-    skip_dirs = {
-        ".git", "__pycache__", "node_modules", ".venv", "venv",
-        "fixtures", "tests",
-    }
+    # Tests and fixtures are scanned like everything else. A real credential
+    # pasted into a test file is still a credential in the repository, and
+    # "it is only a fixture" is what everybody says. The tests that prove this
+    # scanner works build their bad line from parts, so the literal never
+    # exists in source to be found.
+    skip_dirs = {".git", "__pycache__", "node_modules", ".venv", "venv"}
 
     for path in root.rglob("*"):
         if not path.is_file() or path.suffix not in {".py", ".json", ".sh", ".md", ".yml", ".yaml"}:

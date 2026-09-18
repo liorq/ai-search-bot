@@ -534,3 +534,157 @@ def test_the_inverse_of_a_section_restores_the_original_exactly():
         page, "Spring replacement cost", "Warranty", "Ten years."
     )
     assert result.data["inverse"]["content"] == GUTENBERG
+
+
+# ═══════════════════════════════════════════════════════
+#  Linking a phrase the page already says
+# ═══════════════════════════════════════════════════════
+
+class TestLinkPhrase:
+    def classic(self, markup: str) -> wp_content.PostContent:
+        return wp_content.PostContent(
+            post_id=7, post_type="pages", builder="classic", raw_content=markup)
+
+    def test_the_phrase_is_wrapped_and_nothing_else_changes(self):
+        page = self.classic("<p>We replace every torsion spring in Denver.</p>")
+        result = wp_content.link_phrase(page, "torsion spring", "https://x.com/springs")
+
+        assert result
+        assert result.data["payload"]["content"] == (
+            '<p>We replace every <a href="https://x.com/springs">torsion spring</a>'
+            " in Denver.</p>"
+        )
+        assert result.data["inverse"]["content"] == page.raw_content
+
+    def test_a_heading_is_never_turned_into_a_link(self):
+        """Linking the H2 changes what the page says it is about."""
+        page = self.classic("<h2>Torsion spring</h2><p>Nothing else here.</p>")
+        result = wp_content.link_phrase(page, "torsion spring", "https://x.com/s")
+        assert not result
+        assert result.code == "phrase_not_found"
+
+    def test_an_existing_anchor_is_not_nested_inside_another(self):
+        page = self.classic('<p>See <a href="/other">torsion spring</a> page.</p>')
+        assert not wp_content.link_phrase(page, "torsion spring", "https://x.com/s")
+
+    def test_a_match_inside_an_attribute_never_corrupts_the_markup(self):
+        page = self.classic('<p><img alt="torsion spring" src="a.png">Text.</p>')
+        assert not wp_content.link_phrase(page, "torsion spring", "https://x.com/s")
+
+    def test_running_twice_does_not_add_the_link_twice(self):
+        page = self.classic("<p>A torsion spring and a torsion spring.</p>")
+        once = wp_content.link_phrase(page, "torsion spring", "https://x.com/s")
+        again = self.classic(once.data["payload"]["content"])
+        result = wp_content.link_phrase(again, "torsion spring", "https://x.com/s")
+
+        assert not result
+        assert result.code == "already_linked"
+
+    def test_only_the_first_occurrence_is_linked(self):
+        page = self.classic("<p>A torsion spring and a torsion spring.</p>")
+        markup = wp_content.link_phrase(
+            page, "torsion spring", "https://x.com/s").data["payload"]["content"]
+        assert markup.count("<a href") == 1
+
+    def test_the_match_respects_word_boundaries(self):
+        page = self.classic("<p>The springboard is not a spring.</p>")
+        markup = wp_content.link_phrase(
+            page, "spring", "https://x.com/s").data["payload"]["content"]
+        assert "springboard" in markup
+        assert 'a <a href="https://x.com/s">spring</a>.' in markup
+
+    def test_hebrew_is_matched_like_any_other_word(self):
+        page = self.classic("<p>אנחנו מתקנים תריסים חשמליים בתל אביב.</p>")
+        result = wp_content.link_phrase(page, "תריסים חשמליים", "https://x.com/t")
+        assert result
+        assert '<a href="https://x.com/t">תריסים חשמליים</a>' in \
+            result.data["payload"]["content"]
+
+    def test_an_elementor_page_is_edited_in_the_widget_tree(self):
+        page = wp_content.PostContent(
+            post_id=7, post_type="pages", builder="elementor",
+            raw_content="stale copy of the text",
+            elementor_tree=[{
+                "id": "a1", "elType": "section",
+                "elements": [{
+                    "id": "b2", "elType": "widget", "widgetType": "text-editor",
+                    "settings": {"editor": "<p>We fix every torsion spring.</p>"},
+                    "elements": [],
+                }],
+            }],
+            meta={wp_content.ELEMENTOR_CSS_KEY: "cached"},
+        )
+        result = wp_content.link_phrase(page, "torsion spring", "https://x.com/s")
+
+        assert result
+        written = json.loads(
+            result.data["payload"]["meta"][wp_content.ELEMENTOR_DATA_KEY])
+        editor = written[0]["elements"][0]["settings"]["editor"]
+        assert editor == ('<p>We fix every <a href="https://x.com/s">'
+                          "torsion spring</a>.</p>")
+        # The CSS cache has to be cleared or the old layout keeps rendering.
+        assert result.data["payload"]["meta"][wp_content.ELEMENTOR_CSS_KEY] == ""
+        assert result.data["inverse"]["meta"][wp_content.ELEMENTOR_CSS_KEY] == "cached"
+
+    def test_an_elementor_page_already_linking_is_left_alone(self):
+        page = wp_content.PostContent(
+            post_id=7, post_type="pages", builder="elementor", raw_content="",
+            elementor_tree=[{
+                "id": "b2", "elType": "widget", "widgetType": "text-editor",
+                "settings": {"editor": '<p>See <a href="https://x.com/s">it</a>. '
+                                       "A torsion spring.</p>"},
+                "elements": [],
+            }],
+        )
+        assert wp_content.link_phrase(page, "torsion spring", "https://x.com/s").code \
+            == "already_linked"
+
+
+class TestRetargetLink:
+    def test_every_link_to_the_old_url_moves_and_the_text_stays(self):
+        page = wp_content.PostContent(
+            post_id=7, post_type="pages", builder="classic",
+            raw_content='<p><a href="https://x.com/old">Springs</a> and '
+                        '<a href="https://x.com/old/">again</a>.</p>')
+        result = wp_content.retarget_link(page, "https://x.com/old",
+                                          "https://x.com/new")
+
+        assert result.data["links_changed"] == 2
+        markup = result.data["payload"]["content"]
+        assert "https://x.com/old" not in markup
+        assert ">Springs<" in markup and ">again<" in markup
+
+    def test_a_page_with_no_such_link_says_so(self):
+        page = wp_content.PostContent(
+            post_id=7, post_type="pages", builder="classic",
+            raw_content='<p><a href="/other">x</a></p>')
+        assert wp_content.retarget_link(
+            page, "https://x.com/old", "https://x.com/new").code == "link_not_found"
+
+    def test_the_same_url_twice_is_refused_rather_than_written(self):
+        page = wp_content.PostContent(
+            post_id=7, post_type="pages", builder="classic",
+            raw_content='<a href="https://x.com/old">x</a>')
+        assert not wp_content.retarget_link(page, "https://x.com/old",
+                                            "https://x.com/old")
+
+    def test_an_elementor_button_destination_is_moved_too(self):
+        """A button keeps its URL in settings.link.url, not in any markup."""
+        page = wp_content.PostContent(
+            post_id=7, post_type="pages", builder="elementor", raw_content="",
+            elementor_tree=[{
+                "id": "a1", "elType": "widget", "widgetType": "button",
+                "settings": {"link": {"url": "https://x.com/old", "is_external": ""}},
+                "elements": [],
+            }, {
+                "id": "a2", "elType": "widget", "widgetType": "text-editor",
+                "settings": {"editor": '<a href="https://x.com/old">t</a>'},
+                "elements": [],
+            }])
+        result = wp_content.retarget_link(page, "https://x.com/old",
+                                          "https://x.com/new")
+
+        assert result.data["links_changed"] == 2
+        tree = json.loads(result.data["payload"]["meta"][wp_content.ELEMENTOR_DATA_KEY])
+        assert tree[0]["settings"]["link"]["url"] == "https://x.com/new"
+        assert "https://x.com/new" in tree[1]["settings"]["editor"]
