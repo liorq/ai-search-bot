@@ -19,6 +19,20 @@ from seo_core.clients import (  # noqa: E402
     validate,
 )
 
+#: Built from parts, never as one literal: the leak scanner runs over this
+#: file too, and a credential-shaped string here would be a real finding.
+FAKE_APP_PASSWORD = " ".join(["abcd", "efgh", "ijkl", "mnop", "qrst", "uvwx"])
+FAKE_HARDCODED = "s3cr3t" + "value12345"
+
+
+def credential_line(name: str, value: str) -> str:
+    """Assemble an assignment the scanner should flag, without writing one.
+
+    Spelled out in full it would be a finding in this very file, which is the
+    behaviour these tests exist to confirm.
+    """
+    return f'{name} = "{value}"\n'
+
 GOOD = {
     "denvergaragedoor.com": {
         "market": "us",
@@ -131,7 +145,7 @@ def test_client_without_ga4_has_no_conversion_data():
 # ═══════════════════════════════════════════════════════
 
 def test_secret_is_read_from_the_environment(registry, monkeypatch):
-    monkeypatch.setenv("DGD_WP_APP_PASSWORD", "abcd efgh ijkl mnop qrst uvwx")
+    monkeypatch.setenv("DGD_WP_APP_PASSWORD", FAKE_APP_PASSWORD)
     assert load("denvergaragedoor.com", registry).secret().startswith("abcd")
 
 
@@ -143,7 +157,7 @@ def test_missing_secret_points_at_the_env_file(registry, monkeypatch):
 
 def test_client_object_does_not_carry_the_password(registry, monkeypatch):
     """A config dumped into a log or report must not leak a credential."""
-    monkeypatch.setenv("DGD_WP_APP_PASSWORD", "abcd efgh ijkl mnop qrst uvwx")
+    monkeypatch.setenv("DGD_WP_APP_PASSWORD", FAKE_APP_PASSWORD)
     client = load("denvergaragedoor.com", registry)
     assert "abcd" not in repr(client)
 
@@ -154,14 +168,14 @@ def test_client_object_does_not_carry_the_password(registry, monkeypatch):
 
 def test_scanner_finds_a_hardcoded_password(tmp_path):
     (tmp_path / "bad.py").write_text(
-        'DATAFORSEO_PASSWORD = "s3cr3tvalue12345"\n', encoding="utf-8"
+        credential_line("DATAFORSEO_PASSWORD", FAKE_HARDCODED), encoding="utf-8"
     )
     assert len(secrets.scan_for_leaks(tmp_path)) == 1
 
 
 def test_scanner_finds_a_wordpress_application_password(tmp_path):
     (tmp_path / "bad.py").write_text(
-        'pw = "abcd efgh ijkl mnop qrst uvwx"\n', encoding="utf-8"
+        credential_line("pw", FAKE_APP_PASSWORD), encoding="utf-8"
     )
     assert secrets.scan_for_leaks(tmp_path)
 
@@ -180,14 +194,21 @@ def test_scanner_allows_placeholders(tmp_path):
     assert secrets.scan_for_leaks(tmp_path) == []
 
 
-def test_scanner_skips_test_directories(tmp_path):
-    """Fake credentials belong in tests — including the ones in this file."""
+def test_the_scanner_does_not_give_test_directories_a_pass(tmp_path):
+    """A credential in a test file is a credential in the repository.
+
+    The scanner used to skip `tests/`, on the reasoning that fake credentials
+    belong there. But nothing distinguishes a fake one from a real one on
+    sight, and a password pasted into a fixture while debugging a client's
+    site is exactly the leak this exists to stop. The tests that need a
+    credential-shaped string now assemble it at run time instead.
+    """
     test_dir = tmp_path / "tests"
     test_dir.mkdir()
     (test_dir / "test_thing.py").write_text(
-        'FAKE_PASSWORD = "notarealvalue123"\n', encoding="utf-8"
+        credential_line("PASSWORD", FAKE_HARDCODED), encoding="utf-8"
     )
-    assert secrets.scan_for_leaks(tmp_path) == []
+    assert len(secrets.scan_for_leaks(tmp_path)) == 1
 
 
 def test_assert_no_leaks_raises_with_the_file_and_line(tmp_path):
