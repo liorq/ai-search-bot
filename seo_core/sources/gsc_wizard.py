@@ -226,17 +226,43 @@ def property_totals(session: Session, property_url: str, start: str, end: str,
                           impressions=int(rows[0].get("impressions") or 0))
 
 
-def completeness(rows: list[dict[str, Any]], totals: dict[str, int], dropped: int,
-                 truncated: bool | str) -> dict[str, Any]:
+def visible_totals(session: Session, property_url: str, start: str, end: str,
+                   search_type: str = "web") -> Result:
+    """What the *named* queries add up to, counted the way the property total is.
+
+    The query+page rows cannot be held against the property total: they count
+    an impression once per URL shown, the total counts it once. Measured on a
+    real site, that made 24% hidden impressions look like 5%. Summing the
+    query-only rows is the like-for-like comparison.
+    """
+    clicks = impressions = offset = 0
+    for _ in range(MAX_PAGES):
+        page = session.call("query_search_analytics", {
+            "siteUrl": property_url, "startDate": start, "endDate": end,
+            "dimensions": ["query"], "searchType": search_type,
+            "rowLimit": PAGE_SIZE, "startRow": offset})
+        if not page:
+            return page
+        data = page.data["payload"]
+        for entry in data.get("rows") or []:
+            clicks += int(entry.get("clicks") or 0)
+            impressions += int(entry.get("impressions") or 0)
+        pagination = data.get("pagination") or {}
+        if not pagination.get("hasMore"):
+            break
+        offset = int(pagination.get("nextOffset") or offset + PAGE_SIZE)
+    return Result.success("visible", "סך השאילתות הגלויות", clicks=clicks, impressions=impressions)
+
+
+def completeness(rows: list[dict[str, Any]], totals: dict[str, int], visible: dict[str, int],
+                 dropped: int, truncated: bool | str) -> dict[str, Any]:
     """How much of the property the rows actually cover.
 
-    Search Console withholds rare queries, so some share is always missing.
-    Two shares are reported because they tell different stories: a site can
-    show nearly all its impressions and still hide most of its clicks.
+    Search Console withholds rare queries — a privacy rule, not a paging limit:
+    splitting the window by day returns exactly the same clicks. So some share
+    is always missing, and two shares are reported because they tell different
+    stories: a site can show most of its impressions and hide most of its clicks.
     """
-    seen_impressions = sum(r["impressions"] for r in rows)
-    seen_clicks = sum(r["clicks"] for r in rows)
-
     def hidden(seen: int, total: int) -> float | None:
         return round(max(0.0, 1 - seen / total), 4) if total else None
 
@@ -245,11 +271,12 @@ def completeness(rows: list[dict[str, Any]], totals: dict[str, int], dropped: in
         "rows_dropped": dropped,
         "dropped_reasons": {"missing_query_or_page": dropped} if dropped else {},
         "impressions_total": totals.get("impressions"),
-        "impressions_in_rows": seen_impressions,
+        "impressions_in_queries": visible.get("impressions"),
         "clicks_total": totals.get("clicks"),
-        "clicks_in_rows": seen_clicks,
-        "anonymised_share": hidden(seen_impressions, totals.get("impressions", 0)),
-        "anonymised_click_share": hidden(seen_clicks, totals.get("clicks", 0)),
+        "clicks_in_queries": visible.get("clicks"),
+        "anonymised_share": hidden(visible.get("impressions", 0), totals.get("impressions", 0)),
+        "anonymised_click_share": hidden(visible.get("clicks", 0), totals.get("clicks", 0)),
+        "hidden_because": "שאילתות נדירות ש-Search Console לא חושף (פרטיות) — לא מגבלת דפדוף",
         "truncated": truncated,
     }
 
@@ -280,6 +307,9 @@ def export_queries(property_url: str, out_dir: Path, days: int = 28,
     totals = property_totals(session, property_url, start, end, search_type)
     if not totals:
         return totals
+    visible = visible_totals(session, property_url, start, end, search_type)
+    if not visible:
+        return visible
 
     export = {
         "property": property_url,
@@ -293,7 +323,7 @@ def export_queries(property_url: str, out_dir: Path, days: int = 28,
         "comparison_window": None,
         "freshness": {"settled_through": window.data["settled_through"],
                       "maturity": window.data["maturity"]},
-        "completeness": completeness(fetched.data["rows"], totals.data,
+        "completeness": completeness(fetched.data["rows"], totals.data, visible.data,
                                      fetched.data["dropped"], fetched.data["truncated"]),
         "calls": session.calls,
     }

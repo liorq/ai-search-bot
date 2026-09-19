@@ -142,8 +142,11 @@ def fetch_queries(client: clients.Client, dirs: dict[str, Path]) -> Path | None:
     log(fetched.detail, "OK")
     fresh, cover = fetched.data["freshness"], fetched.data["completeness"]
     kv("נתונים סגורים עד", fresh["settled_through"])
-    kv("כיסוי הופעות", f"{cover['impressions_in_rows']:,} מתוך {cover['impressions_total']:,}")
-    kv("כיסוי קליקים", f"{cover['clicks_in_rows']:,} מתוך {cover['clicks_total']:,}")
+    kv("הופעות בשאילתות גלויות",
+       f"{cover['impressions_in_queries']:,} מתוך {cover['impressions_total']:,}")
+    kv("קליקים בשאילתות גלויות",
+       f"{cover['clicks_in_queries']:,} מתוך {cover['clicks_total']:,} — השאר בשאילתות "
+       "ש-Search Console מסתיר")
     if cover["truncated"] is not False:
         log("לא ידוע אם המשיכה מלאה" if cover["truncated"] == "unknown"
             else "המשיכה נחתכה — הניתוח חלקי", "WARN")
@@ -224,10 +227,11 @@ def print_report(domain, opportunities, curve, path, window) -> None:
         top = actionable[0]
         print("\n  הצעד הבא — ההזדמנות הגדולה ביותר:\n")
         if top.kind == "cannibalised":
-            print(f"    איחוד סביב {top.detail['winner']}")
+            print(f"    הדף שצריך להחזיק בשאילתה: {top.detail['winner']}")
             for loser in top.detail["losers"]:
-                print(f"      301 מ-{loser['url']}")
-            print("\n    איחוד אינו פעולה אוטומטית — הוא דורש החלטת תוכן.")
+                print(f"      קישור פנימי והבדלת כותרות ב-{loser['url']} "
+                      f"(מיקום {loser['position']})")
+            print(f"\n    {top.detail['redirect']}.")
         else:
             print(f"    python onpage_optimizer.py --mode plan --client {domain} \\")
             print(f"        --url {top.url} \\")

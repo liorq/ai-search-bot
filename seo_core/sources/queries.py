@@ -25,6 +25,7 @@ import statistics
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import urlparse
 
 from ..schema import Finding, Result
 
@@ -47,8 +48,29 @@ BEST_CLAIMABLE_POSITION = 3.0
 #: A curve bucket needs this many queries before its median means anything.
 MIN_ROWS_PER_BUCKET = 8
 
-#: Two URLs count as competing only when both are really in the game.
+#: A query needs this many impressions, across all its URLs, to be worth a look.
 CANNIBAL_MIN_IMPRESSIONS = 30
+
+#: What "in the game" means for a rival URL. Scored on sass-srq.com against
+#: day-level data (2+ pages each reaching the top 20 on a quarter of the days):
+#: 7 flagged, 7 true, 0 false, 2 missed — and the 2 missed were the two the live
+#: results page did not confirm either. At position ≤ 30 three false ones return.
+CANNIBAL_MAX_POSITION = 25.0
+CANNIBAL_MIN_SHARE = 0.15
+
+#: The home page this high on a query means a brand search.
+BRAND_HOME_POSITION = 3.0
+
+#: Fewer places than this between two click-less pages, and neither has won.
+CLEAR_WINNER_GAP = 3.0
+
+#: A redirect is never recommended from split rankings alone. It throws away a
+#: URL with its own links, traffic and conversions, and none of that is visible
+#: in a query table.
+REDIRECT_POLICY = (
+    "הפניית 301 אינה חלק מההמלצה. היא דורשת בדיקה נפרדת של הדף המשני — קישורים "
+    "נכנסים, תנועה והמרות — ואישור מפורש. דף הבית לא מופנה לעולם"
+)
 
 #: Published averages, used only when the client's own data cannot support a
 #: curve. Deliberately conservative — every finding built on these says so.
@@ -362,28 +384,55 @@ def find_near_misses(rows: Iterable[QueryRow], curve: CTRCurve) -> list[Opportun
     return found
 
 
-def find_cannibalisation(rows: Iterable[QueryRow], curve: CTRCurve) -> list[Opportunity]:
-    """Queries where two of our own pages are competing.
+def _is_home(url: str) -> bool:
+    return urlparse(url).path in ("", "/")
 
-    Google picks one and the signal splits. The fix is consolidation — deciding
-    which page owns the query — and never rewriting both.
+
+def find_cannibalisation(rows: Iterable[QueryRow], curve: CTRCurve) -> list[Opportunity]:
+    """Queries where two of our own pages are really competing.
+
+    "Really" is the whole point. The first version asked only that each URL had
+    30 impressions, and on a real site 20 of its 22 findings were wrong: the
+    "rival" sat at position 40–88, where it competes with nobody. Checked
+    against day-by-day data and the live results page, a rival is in the game
+    when it ranks near the front *and* holds a real share of the query:
+
+        position ≤ CANNIBAL_MAX_POSITION  and  share ≥ CANNIBAL_MIN_SHARE
+
+    Two kinds of row are never rivals. The home page, because on a local query
+    its impressions come from the map pack's website button, not from a second
+    organic listing. And any query the home page leads from the top — that is a
+    brand search, and the extra URLs are sitelinks.
     """
     by_query: dict[str, list[QueryRow]] = {}
     for row in rows:
-        if row.impressions >= CANNIBAL_MIN_IMPRESSIONS:
-            by_query.setdefault(row.query, []).append(row)
+        by_query.setdefault(row.query, []).append(row)
 
     found: list[Opportunity] = []
-    for query, competitors in by_query.items():
-        if len(competitors) < 2:
+    for query, pages in by_query.items():
+        total = sum(r.impressions for r in pages)
+        if len(pages) < 2 or total < CANNIBAL_MIN_IMPRESSIONS:
+            continue
+        if any(_is_home(r.url) and r.position <= BRAND_HOME_POSITION for r in pages):
+            continue                                   # a brand search — sitelinks, not rivals
+
+        players = [r for r in pages
+                   if not _is_home(r.url)
+                   and r.position <= CANNIBAL_MAX_POSITION
+                   and r.impressions / total >= CANNIBAL_MIN_SHARE]
+        if len(players) < 2:
             continue
 
         # The winner is the page already doing best, by clicks then position.
-        ranked = sorted(competitors, key=lambda r: (-r.clicks, r.position))
-        winner, losers = ranked[0], ranked[1:]
+        ranked = sorted(players, key=lambda r: (-r.clicks, r.position))
+        winner, rivals = ranked[0], ranked[1:]
+        # With no clicks between them and a couple of places apart, the numbers
+        # do not pick an owner — that is a content decision, and the finding says so.
+        clear = (winner.clicks > rivals[0].clicks
+                 or rivals[0].position - winner.position >= CLEAR_WINNER_GAP)
 
-        impressions = sum(r.impressions for r in competitors)
-        clicks = sum(r.clicks for r in competitors)
+        impressions = sum(r.impressions for r in players)
+        clicks = sum(r.clicks for r in players)
         target = max(1.0, winner.position - 1.0)
         gain = _gain(impressions, clicks, target, curve) * CONSOLIDATION_RECOVERY
 
@@ -392,14 +441,20 @@ def find_cannibalisation(rows: Iterable[QueryRow], curve: CTRCurve) -> list[Oppo
             impressions=impressions, clicks=clicks, position=winner.position,
             potential_clicks=gain,
             basis=(
-                f"{len(competitors)} דפים מתחרים על השאילתה. איחוד סביב "
-                f"{winner.url} מחזיר כ-{CONSOLIDATION_RECOVERY:.0%} מהפער"
+                f"{len(players)} דפים שלנו מדורגים על אותה שאילתה (מיקום "
+                + " ו-".join(f"{r.position:.0f}" for r in ranked)
+                + f"). ריכוז האות ב-{winner.url} מחזיר כ-{CONSOLIDATION_RECOVERY:.0%} מהפער"
+                + ("" if clear else ". אין מנצח ברור במספרים — איזה דף יחזיק בשאילתה "
+                                    "היא החלטת תוכן")
             ),
             detail={
                 "winner": winner.url,
+                "clear_winner": clear,
                 "losers": [{"url": r.url, "clicks": r.clicks,
                             "impressions": r.impressions,
-                            "position": round(r.position, 1)} for r in losers],
+                            "position": round(r.position, 1),
+                            "share": round(r.impressions / total, 2)} for r in rivals],
+                "redirect": REDIRECT_POLICY,
             },
         ))
     return found
@@ -511,8 +566,9 @@ _ACTIONS = {
         "הוסף סעיף שעונה על השאילתה, עם המונחים החסרים בטקסט עצמו",
     ),
     "cannibalised": (
-        "consolidate", "l",
-        "אחד את הדפים: אחד נשאר, השאר מפנים אליו ב-301 וקישור פנימי",
+        "differentiate", "m",
+        "קבע איזה דף הוא הבעלים של השאילתה: קישור פנימי מהדף המשני אליו עם "
+        "השאילתה כעוגן, והבדלת הטייטל וה-H1 של הדף המשני כך שיענה על כוונה אחרת",
     ),
     "low_ctr": (
         "rewrite_title", "s",
@@ -536,7 +592,7 @@ def _confidence(opportunity: Opportunity, curve: CTRCurve) -> tuple[str, str]:
         )
     if opportunity.kind == "cannibalised":
         return "medium", (
-            f"איחוד דפים מחזיר בדרך כלל את רוב הפער, לא את כולו; "
+            f"ריכוז האות בדף אחד מחזיר בדרך כלל את רוב הפער, לא את כולו; "
             f"חושב לפי {CONSOLIDATION_RECOVERY:.0%} על {curve.describe()}"
         )
     if opportunity.kind == "coverage_gap":
@@ -569,6 +625,21 @@ def to_finding(
         confidence, reason = cap_confidence(confidence, reason, completeness)
     potential = round(opportunity.potential_clicks, 1)
 
+    # An estimate can only speak for the queries Search Console showed us. When
+    # most of the property's clicks sit in hidden queries, the number is marked
+    # as covering the visible part only — it is not the site's upside.
+    coverage: dict[str, Any] = {}
+    basis = opportunity.basis
+    if completeness is not _NOT_MEASURED and completeness:
+        hidden = completeness.get("anonymised_click_share")
+        coverage = {"data_coverage": {
+            "hidden_click_share": hidden,
+            "hidden_impression_share": completeness.get("anonymised_share"),
+        }}
+        if hidden is not None and hidden > MAX_HIDDEN_SHARE:
+            basis += (f". האומדן מתייחס רק לשאילתות הגלויות — {hidden:.0%} מהקליקים "
+                      "של הנכס מגיעים משאילתות ש-Search Console מסתיר")
+
     action: dict[str, Any] = {
         "kind": kind,
         "url": opportunity.url,
@@ -590,7 +661,7 @@ def to_finding(
             round(potential * conversion_rate, 2)
             if conversion_rate and opportunity.kind != "low_ctr" else None
         ),
-        impact_basis=opportunity.basis,
+        impact_basis=basis,
         confidence=confidence,
         confidence_reason=reason,
         effort=effort,
@@ -602,6 +673,7 @@ def to_finding(
             if opportunity.impressions else 0.0,
             "expected_ctr": round(curve.expected(opportunity.position), 4),
             "curve_source": curve.source,
+            **coverage,
             **opportunity.detail,
         },
         action=action,

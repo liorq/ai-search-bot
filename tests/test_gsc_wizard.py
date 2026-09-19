@@ -48,6 +48,18 @@ class Server:
             return 200, stream, sse(tool_reply({**base, "rows": [
                 {"keys": [], "clicks": clicks, "impressions": impressions,
                  "ctr": 10.0, "position": 9.9}]}))
+        if args["dimensions"] == ["query"]:
+            # Property-style aggregation: one row per query, however many URLs showed.
+            by_query: dict[str, dict] = {}
+            for r in self.rows:
+                if len(r["keys"]) != 2:
+                    continue
+                agg = by_query.setdefault(r["keys"][0], {"keys": [r["keys"][0]],
+                                                         "clicks": 0, "impressions": 0})
+                agg["clicks"] += r["clicks"]
+                agg["impressions"] += r["impressions"]
+            return 200, stream, sse(tool_reply({**base, "rows": list(by_query.values()),
+                                                "pagination": {"hasMore": False}}))
         start = args.get("startRow", 0)
         size = self.page_size or len(self.rows) or 1
         chunk = self.rows[start:start + size]
@@ -110,7 +122,8 @@ def test_a_full_page_is_followed_not_assumed_to_be_the_end(tmp_path):
     assert len(written["rows"]) == 5
     assert written["completeness"]["truncated"] is False
     offsets = [p["params"]["arguments"].get("startRow") for p in server.seen
-               if p["method"] == "tools/call" and p["params"]["arguments"].get("dimensions")]
+               if p["method"] == "tools/call"
+               and p["params"]["arguments"].get("dimensions") == ["query", "page"]]
     assert offsets == [0, 2, 4]          # paged with startRow, the parameter that works
 
 
