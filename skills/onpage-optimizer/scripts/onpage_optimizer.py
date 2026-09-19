@@ -42,7 +42,7 @@ from seo_core.change_guard import checks, ledger, plan as plan_mod       # noqa:
 from seo_core.change_guard import risk, rollback                         # noqa: E402
 from seo_core.log import banner, kv, log, rule                           # noqa: E402
 from seo_core.schema import ChangeRecord, save_findings                  # noqa: E402
-from seo_core.sources import queries                                     # noqa: E402
+from seo_core.sources import gsc_wizard, queries                         # noqa: E402
 from seo_core.wp import backup as wp_backup                              # noqa: E402
 from seo_core.wp import content as wp_content                            # noqa: E402
 from seo_core.wp import rehearsal                                        # noqa: E402
@@ -133,9 +133,31 @@ def load_crawl(path: str | None) -> dict[str, str]:
     return {url: str(text) for url, text in (raw.get("pages") or raw).items()}
 
 
-def analyze(domain: str, queries_path: Path, crawl_path: str | None) -> int:
-    clients.load(domain)          # מאמת שהלקוח מוגדר לפני שקוראים משהו
+def fetch_queries(client: clients.Client, dirs: dict[str, Path]) -> Path | None:
+    """מושך את החלון הסגור האחרון מ-GSC Wizard. בלי זה הסקיל דרש קובץ ידני."""
+    fetched = gsc_wizard.export_queries(client.gsc_property, dirs["base"] / "gsc")
+    if not fetched:
+        log(fetched.detail, "ERR")
+        return None
+    log(fetched.detail, "OK")
+    fresh, cover = fetched.data["freshness"], fetched.data["completeness"]
+    kv("נתונים סגורים עד", fresh["settled_through"])
+    kv("כיסוי הופעות", f"{cover['impressions_in_rows']:,} מתוך {cover['impressions_total']:,}")
+    kv("כיסוי קליקים", f"{cover['clicks_in_rows']:,} מתוך {cover['clicks_total']:,}")
+    if cover["truncated"] is not False:
+        log("לא ידוע אם המשיכה מלאה" if cover["truncated"] == "unknown"
+            else "המשיכה נחתכה — הניתוח חלקי", "WARN")
+    return fetched.data["path"]
+
+
+def analyze(domain: str, queries_path: Path | None, crawl_path: str | None) -> int:
+    client = clients.load(domain)  # מאמת שהלקוח מוגדר לפני שקוראים משהו
     dirs = client_dirs(domain)
+
+    if queries_path is None:
+        queries_path = fetch_queries(client, dirs)
+        if queries_path is None:
+            return 1
 
     loaded = queries.load_export(queries_path)
     if not loaded:
@@ -157,7 +179,8 @@ def analyze(domain: str, queries_path: Path, crawl_path: str | None) -> int:
         return 0
 
     conversion_rate = None      # ימולא מ-GA4 כשהמודול ייבנה
-    findings = [queries.to_finding(o, domain, curve, conversion_rate)
+    findings = [queries.to_finding(o, domain, curve, conversion_rate,
+                                   completeness=loaded.data["completeness"])
                 for o in opportunities]
     path = save_findings(findings, dirs["reports"] / "onpage_findings.json")
 
@@ -479,10 +502,9 @@ def main(argv: list[str] | None = None) -> int:
             return self_check(args.client)
 
         if args.mode == "analyze":
-            if not args.queries:
-                log("--mode analyze דורש --queries", "ERR")
-                return 1
-            return analyze(args.client, Path(args.queries), args.crawl)
+            # בלי --queries הנתונים נמשכים לבד מ-GSC Wizard.
+            return analyze(args.client, Path(args.queries) if args.queries else None,
+                           args.crawl)
 
         if args.mode == "plan":
             if not (args.url and args.after and args.heading and args.text):

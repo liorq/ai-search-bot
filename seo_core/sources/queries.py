@@ -117,6 +117,7 @@ def load_export(path: Path) -> Result:
         return Result.failure("export_corrupt", f"קובץ השאילתות אינו JSON תקין: {exc}")
 
     rows: list[QueryRow] = []
+    dropped = 0
     for entry in raw.get("rows") or []:
         try:
             rows.append(QueryRow(
@@ -127,7 +128,7 @@ def load_export(path: Path) -> Result:
                 position=float(entry.get("position") or 0),
             ))
         except (KeyError, TypeError, ValueError):
-            continue
+            dropped += 1          # counted and reported — never skipped in silence
 
     if not rows:
         return Result.failure(
@@ -135,10 +136,47 @@ def load_export(path: Path) -> Result:
             "הקובץ לא מכיל שורות שמישות — כל שורה צריכה query, url, "
             "clicks, impressions ו-position",
         )
+    detail = f"{len(rows)} שורות שאילתה נטענו"
+    if dropped:
+        detail += f", {dropped} שורות פגומות דולגו"
     return Result.success(
-        "loaded", f"{len(rows)} שורות שאילתה נטענו",
-        rows=rows, window=raw.get("range", "28d"),
+        "loaded", detail,
+        rows=rows, window=raw.get("range", "28d"), dropped=dropped,
+        completeness=raw.get("completeness"),
     )
+
+
+#: Past this share of hidden queries, an estimate is built on a minority of the
+#: traffic and may not claim full confidence. From docs/data-contract.md.
+MAX_HIDDEN_SHARE = 0.3
+
+_CONFIDENCE_ORDER = ("low", "medium", "high")
+
+
+def cap_confidence(confidence: str, reason: str,
+                   completeness: dict[str, Any] | None) -> tuple[str, str]:
+    """Hold a finding's confidence to what the data underneath it can carry.
+
+    An analysis of partial rows is still worth reading, but it may not present
+    itself as certain — and the finding has to say why it was held back.
+    """
+    def capped(ceiling: str, why: str) -> tuple[str, str]:
+        if _CONFIDENCE_ORDER.index(confidence) <= _CONFIDENCE_ORDER.index(ceiling):
+            return confidence, f"{reason}. {why}"
+        return ceiling, f"{reason}. הביטחון הורד ל-{ceiling}: {why}"
+
+    if not completeness:
+        return capped("medium", "שלמות הנתונים לא ידועה — הקובץ לא מדווח כמה מהנכס הוא מכסה")
+    if completeness.get("truncated") is True:
+        return capped("low", "המשיכה נחתכה לפני סוף הנתונים")
+    if completeness.get("truncated") == "unknown":
+        return capped("medium", "לא ידוע אם המשיכה הגיעה לסוף הנתונים")
+    hidden = [completeness.get("anonymised_share"), completeness.get("anonymised_click_share")]
+    worst = max((h for h in hidden if h is not None), default=None)
+    if worst is not None and worst > MAX_HIDDEN_SHARE:
+        return capped("medium", f"{worst:.0%} מהתנועה של הנכס יושבים בשאילתות "
+                                "ש-Search Console לא חושף, ולכן לא נכללו בניתוח")
+    return confidence, reason
 
 
 # ═══════════════════════════════════════════════════════
@@ -512,13 +550,23 @@ def _confidence(opportunity: Opportunity, curve: CTRCurve) -> tuple[str, str]:
     )
 
 
+_NOT_MEASURED: Any = object()
+
+
 def to_finding(
     opportunity: Opportunity, client: str, curve: CTRCurve,
     conversion_rate: float | None = None,
+    completeness: dict[str, Any] | None = _NOT_MEASURED,
 ) -> Finding:
-    """One opportunity as a ranked, evidence-carrying finding."""
+    """One opportunity as a ranked, evidence-carrying finding.
+
+    Pass the export's `completeness` block (or None when the export has none)
+    and the confidence is held to what the data can carry.
+    """
     kind, effort, instruction = _ACTIONS[opportunity.kind]
     confidence, reason = _confidence(opportunity, curve)
+    if completeness is not _NOT_MEASURED:
+        confidence, reason = cap_confidence(confidence, reason, completeness)
     potential = round(opportunity.potential_clicks, 1)
 
     action: dict[str, Any] = {
