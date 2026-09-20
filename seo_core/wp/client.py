@@ -20,6 +20,7 @@ from typing import Any, Protocol
 from urllib.parse import urlparse
 
 from ..schema import Result
+from . import targets
 
 REQUEST_TIMEOUT = 20          # שניות
 USER_AGENT      = "seo-toolkit/1.0 (+WordPress REST)"
@@ -96,12 +97,17 @@ class WordPressClient:
         username: str,
         app_password: str,
         transport: Transport | None = None,
+        write_guard: Any | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.username = username
         self._password = app_password
         self._transport = transport
         self.capabilities = Capabilities()
+        #: When set, every write is checked against it first. The rehearsal
+        #: always sets one; a skill's publish mode may. `_call` is the only
+        #: place a request is sent, so one check here covers all of them.
+        self.write_guard = write_guard
 
     # ---------- plumbing ----------
 
@@ -121,6 +127,16 @@ class WordPressClient:
 
     def _call(self, method: str, url: str, **kwargs: Any) -> Result:
         kwargs.setdefault("timeout", REQUEST_TIMEOUT)
+
+        guarded = self.write_guard is not None and method.upper() in targets.WRITE_METHODS
+        if guarded:
+            permitted = self.write_guard.check(method, url)
+            if not permitted:
+                return permitted
+            # Never follow a redirect on a write: a 301 from staging to
+            # production is how a rehearsal becomes a live edit.
+            kwargs.setdefault("allow_redirects", False)
+
         try:
             response = self._session().request(method, url, **kwargs)
         except Exception as exc:                      # network, TLS, DNS
@@ -129,6 +145,17 @@ class WordPressClient:
             )
 
         status = getattr(response, "status_code", 0)
+        if guarded:
+            if 300 <= status < 400:
+                return Result.failure(
+                    "write_redirected",
+                    f"בקשת הכתיבה ל-{url} קיבלה הפניה ({status}) אל "
+                    f"{getattr(response, 'headers', {}).get('Location', 'יעד לא ידוע')} — "
+                    "לא נשלחה שוב. פנה ישירות לכתובת הנכונה", recoverable=False)
+            landed = self.write_guard.check_landing(
+                getattr(response, "url", url), getattr(response, "history", None))
+            if not landed:
+                return landed
         if status == 401:
             return Result.failure("unauthorized", "האימות נדחה — בדוק את סיסמת האפליקציה")
         if status == 403:

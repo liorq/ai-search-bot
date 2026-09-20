@@ -27,6 +27,7 @@ from typing import Any, Callable
 from ..schema import Result
 from . import backup as wp_backup
 from . import content as wp_content
+from . import targets
 
 REHEARSAL_FILE     = "rehearsal.json"
 REHEARSAL_TTL_DAYS = 180
@@ -53,6 +54,9 @@ class Rehearsal:
     steps: list[Step] = field(default_factory=list)
     passed: bool = False
     completed_at: str = ""
+    #: Every field the drill wrote and put back, so the run can be read as a
+    #: list of changes rather than a verdict: url, field, before, after, restored.
+    fields_touched: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def failed_step(self) -> Step | None:
@@ -207,7 +211,29 @@ def run(
             f"ולא {original_hash} — הדף לא חזר למצבו המקורי. בדוק ידנית.",
             recoverable=False,
         )
-    drill.steps.append(Step("confirm_restore", True, f"חזר ל-hash {original_hash}"))
+    # A hash covers what went into it. Fields the hash does not read — the SEO
+    # plugin's title and description above all — can come back wrong while the
+    # hash says the page is identical, so every field is compared on its own.
+    differences = compare_fields(snapshot, final.data["content"])
+    restored_ok = {d["field"] for d in differences}
+    drill.fields_touched = [
+        {"url": drill.target_url, "field": name,
+         "before": _shorten(_field_value(snapshot, page, name)[0]),
+         "after": _shorten(_field_value(snapshot, final.data["content"], name)[1]),
+         "restored": name not in restored_ok}
+        for name in changed_fields(snapshot)
+    ]
+    if differences:
+        return fail(
+            "confirm_restore",
+            "ה-hash תואם אבל שדות לא חזרו למצבם: "
+            + "; ".join(f"{d['field']} — היה {d['before']!r}, עכשיו {d['after']!r}"
+                        for d in differences),
+            recoverable=False,
+        )
+    drill.steps.append(Step(
+        "confirm_restore", True,
+        f"חזר ל-hash {original_hash}, ו-{len(changed_fields(snapshot)) or 1} שדות אומתו אחד-אחד"))
 
     drill.passed = all(step.ok for step in drill.steps)
     drill.completed_at = datetime.now(timezone.utc).isoformat()
@@ -257,6 +283,43 @@ def _locate(wp: Any, url: str) -> Result:
         "no_target",
         "אף דף באתר לא מכיל כותרת — צור דף עם כותרת H2, או ציין --url ו---heading",
     )
+
+
+def _shorten(value: Any, limit: int = 120) -> str:
+    text = value if isinstance(value, str) else repr(value)
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
+def changed_fields(snapshot: Any) -> list[str]:
+    """Every field the drill is responsible for putting back."""
+    fields = ["content"]
+    fields += [f"meta.{key}" for key in sorted((snapshot.meta or {}).keys())]
+    return fields
+
+
+def _field_value(snapshot: Any, page: Any, field: str) -> tuple[Any, Any]:
+    if field == "content":
+        return snapshot.content, page.raw_content
+    key = field.split(".", 1)[1]
+    return (snapshot.meta or {}).get(key), (page.meta or {}).get(key)
+
+
+def compare_fields(snapshot: Any, page: Any, limit: int = 120) -> list[dict[str, Any]]:
+    """Which of the backed-up fields did NOT come back.
+
+    Values are truncated for display; the drill record keeps what it needs to
+    show a human which field to fix by hand.
+    """
+    def show(value: Any) -> Any:
+        text = value if isinstance(value, str) else repr(value)
+        return text if len(text) <= limit else text[:limit] + "…"
+
+    differences = []
+    for name in changed_fields(snapshot):
+        before, after = _field_value(snapshot, page, name)
+        if before != after:
+            differences.append({"field": name, "before": show(before), "after": show(after)})
+    return differences
 
 
 def _reread(wp: Any, post_id: int, post_type: str) -> Result:
@@ -397,9 +460,27 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     url = args.url or base
+
+    # Nothing is written before the target is on the list AND says it is that
+    # site. The list lives beside the keys, not in the repo, and an absent one
+    # allows nothing.
+    guard = targets.WriteGuard.for_purpose("rehearsal")
+    allowed = guard.check("POST", base)
+    if not allowed:
+        log(allowed.detail, "ERR")
+        log(f"הוסף את היעד ל-{targets.targets_path()} בצורה "
+            '{"rehearsal": ["http://my-site.local"]}', "WARN")
+        return 1
+
     wp = WordPressClient(
-        base_url=base, username=client.cms.username, app_password=client.secret()
+        base_url=base, username=client.cms.username, app_password=client.secret(),
+        write_guard=guard,
     )
+
+    identity = targets.verify_identity(base, lambda u: wp._call("GET", u))
+    if not identity:
+        log(identity.detail, "ERR")
+        return 1
 
     def fetch(target: str) -> tuple[int, str]:
         import requests
@@ -408,6 +489,8 @@ def main(argv: list[str] | None = None) -> int:
 
     banner(f"🧪 חזרה גנרלית — {args.client}")
     kv("אתר", base)
+    kv("יעדי כתיבה מורשים", guard.describe())
+    kv("זהות האתר", identity.detail)
     kv("דף", args.url or "ייבחר אוטומטית")
     kv("מיקום המפתחות", paths.home())
     for problem in paths.warnings_for():
@@ -421,6 +504,15 @@ def main(argv: list[str] | None = None) -> int:
         for step in drill.steps:
             log(f"{step.name}: {step.detail}", "OK" if step.ok else "ERR")
     rule()
+
+    # The consolidated list the owner asked for: every page and field touched.
+    if drill and drill.fields_touched:
+        print("\n  שדות שנגעו בהם:")
+        for entry in drill.fields_touched:
+            print(f"     {entry['url']}")
+            print(f"       {entry['field']}: {entry['before']} ← {entry['after']}"
+                  f"  [שוחזר: {entry['restored']}]")
+        print()
 
     if outcome:
         log(outcome.detail, "OK")
