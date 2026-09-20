@@ -380,11 +380,20 @@ def publish(domain: str, plan_id: str) -> int:
         return 1
     log("נכתב", "OK")
 
+    # מטמון שלא נוקה פירושו שהשינוי נשמר אבל אף אחד לא מאשר שרואים אותו.
+    # זה לא פרסום מוצלח, וזה גם לא כישלון שמצדיק שחזור.
+    unverified = "cache_cleared" in written.data and not written.data["cache_cleared"]
+    if unverified:
+        log(written.data["cache_detail"], "WARN")
+        log("הכתיבה נשמרה אבל לא אומת שהמבקר רואה אותה — "
+            "מסומן כפרסום שלא אומת", "WARN")
+
     record = ChangeRecord(
         change_id=change_id, plan_id=plan_id, skill="onpage-optimizer", client=domain,
         url=change_plan.url, post_id=change_plan.post_id,
         before_hash=change_plan.before_hash, inverse=change_plan.inverse,
-        backup_ref=str(backup_path), backup_verified=True, status="applied",
+        backup_ref=str(backup_path), backup_verified=True,
+        status="applied_unverified" if unverified else "applied",
         applied_at=datetime.now(timezone.utc),
         checkpoints=ledger.schedule_checkpoints(datetime.now(timezone.utc)),
         # Why it was done and what the page was doing beforehand. Without
@@ -419,10 +428,14 @@ def publish(domain: str, plan_id: str) -> int:
         ledger.record(record, dirs["base"])
         return 1
 
+    if unverified:
+        record.notes.append(written.data["cache_detail"])
     ledger.record(record, dirs["base"])
-    banner("✅ פורסם")
+    banner("⚠️  פורסם — לא אומת" if unverified else "✅ פורסם")
     kv("שינוי", change_id)
-    kv("מדידה חוזרת", "14 · 28 · 56 יום")
+    if unverified:
+        kv("מצב", "נכתב, אבל לא אומת שהמבקר רואה — נקה את מטמון Elementor ובדוק את הדף")
+    kv("מדידה חוזרת", "28 · 56 · 84 יום")
 
     # ציון ה-SEO בתוסף מחושב בדפדפן ולא בשרת, אז הוא נשאר על הגרסה הקודמת.
     plugin = seo_meta.detect_plugin(found.data["payload"])

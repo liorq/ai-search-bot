@@ -15,6 +15,7 @@ falls back to producing text for a human to paste; it never pushes harder.
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 from urllib.parse import urlparse
@@ -31,6 +32,11 @@ EDITABLE_POST_TYPES = ("post", "page")
 
 #: The one meta key whose change nobody sees until Elementor re-renders.
 ELEMENTOR_DATA_KEY = "_elementor_data"
+
+#: Clearing the cache regenerates a whole site's files. Two tries and a short
+#: pause; past that it is a fact to report, not something to keep asking for.
+CACHE_CLEAR_ATTEMPTS = 2
+CACHE_RETRY_DELAY = 2.0
 
 
 class Transport(Protocol):
@@ -339,15 +345,26 @@ class WordPressClient:
             written.data["cache_detail"] = cleared.detail
         return written
 
-    def clear_elementor_cache(self) -> Result:
+    def clear_elementor_cache(self, attempts: int = CACHE_CLEAR_ATTEMPTS) -> Result:
         """Make Elementor re-render. Site-wide, because that is what it offers.
 
         This is the endpoint behind "Regenerate Files & Data" in Elementor's
         own Tools screen. It throws away generated markup and CSS; nothing
         authored is touched, and the next visitor pays one re-render.
+
+        Retried at most `attempts` times, and only for failures that a retry
+        could fix. A cache that will not clear is a fact to report, not a loop
+        to spin in: the endpoint regenerates a whole site's files, so hammering
+        it turns one stubborn page into an outage.
         """
-        cleared = self._call("DELETE", f"{self.base_url}/wp-json/elementor/v1/cache",
-                             expect_json=False)
+        cleared = Result.failure("cache_not_attempted", "לא נוסה")
+        for attempt in range(1, max(1, attempts) + 1):
+            cleared = self._call("DELETE", f"{self.base_url}/wp-json/elementor/v1/cache",
+                                 expect_json=False)
+            if cleared or not cleared.recoverable or cleared.code == "not_found":
+                break
+            if attempt < attempts:
+                time.sleep(CACHE_RETRY_DELAY)
         if cleared:
             return Result.success("cache_cleared", "המטמון של Elementor נוקה")
         if cleared.code == "not_found":

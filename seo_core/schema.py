@@ -272,12 +272,13 @@ def dedupe(findings: list[Finding]) -> list[Finding]:
 # ═══════════════════════════════════════════════════════
 
 ChangeStatus = Literal[
-    "planned",       # approved, not yet written
-    "applied",       # written, technical checks passed
-    "rolled_back",   # undone after a technical failure
-    "verified",      # held up at the 28/56-day check
-    "declined",      # measured worse; Lior chose not to revert
-    "inconclusive",  # no readable signal yet — keep watching
+    "planned",         # approved, not yet written
+    "applied",         # written, technical checks passed
+    "applied_unverified",  # written, but nobody could confirm a visitor sees it
+    "rolled_back",     # undone after a technical failure
+    "verified",        # held up at the 28/56/84-day check
+    "declined",        # measured worse; Lior chose not to revert
+    "inconclusive",    # no readable signal yet — keep watching
 ]
 
 
