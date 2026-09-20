@@ -43,3 +43,24 @@ def die(msg: str, code: int = 1) -> None:
     """Stop the run with a clear reason. Used when continuing would be unsafe."""
     log(msg, "ERR")
     sys.exit(code)
+
+
+def count(n: int, one: str, many: str) -> str:
+    """Hebrew does not say "1 פריטים".
+
+    Every report in this toolkit prints counts, and the singular reads as a
+    bug to anyone who speaks the language — which is the one person these
+    reports are for.
+    """
+    return one if n == 1 else f"{n} {many}"
+
+
+def hours(value: float) -> str:
+    """A rough duration, in words that survive rounding to one hour."""
+    if value <= 0:
+        return "ללא"
+    if value < 1.5:
+        return "כשעה"
+    if value < 2.5:
+        return "כשעתיים"
+    return f"~{value:.0f} שעות"

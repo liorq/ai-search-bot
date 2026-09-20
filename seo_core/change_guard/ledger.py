@@ -6,23 +6,28 @@ One append-only record per change, per client. It is what makes a change
 reviewable weeks later: what was written, what would undo it, which backup
 protects it, and when it is next due to be measured.
 
-Checkpoints are set at 14, 28 and 56 days. Fourteen is early enough to notice
-something badly wrong, twenty-eight matches the Search Console reporting window
-most comparisons use, and fifty-six gives a slow-moving page time to settle
-before anyone concludes the change did nothing.
+Checkpoints are set at 28, 56 and 84 days. Twenty-eight matches the Search
+Console window most comparisons use and is the first read on whether anything
+moved — a first performance check, not proof that the change caused it. When
+that read cannot tell (too little traffic, no control, the site moved as much
+as the page), the follow-up stays open and asks again at 56 and 84 days.
+A checkpoint that can answer closes the follow-up.
 """
 
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from ..schema import ChangeRecord, ChangeStatus, Result
 
-CHECKPOINT_DAYS = (14, 28, 56)
+CHECKPOINT_DAYS = (28, 56, 84)
 LEDGER_NAME = "change_log.json"
+
+#: Verdicts that settle the question. Anything else leaves the follow-up open.
+CONCLUSIVE = ("improved", "declined", "no_change")
 
 
 def _path(directory: Path) -> Path:
@@ -161,17 +166,58 @@ def due_checkpoints(directory: Path, now: datetime | None = None) -> list[dict[s
 def complete_checkpoint(
     change_id: str, day: int, outcome: str, measured: dict[str, Any], directory: Path
 ) -> Result:
+    """Close one checkpoint — and the later ones too, if this one could answer.
+
+    An inconclusive read is not a result. It leaves 56 and 84 standing, because
+    a page with little traffic often needs the longer window before anything
+    can be said about it at all.
+    """
     changes = _read(directory)
     for entry in changes:
         if entry.get("change_id") != change_id:
             continue
-        for checkpoint in entry.get("checkpoints", []):
+        checkpoints = entry.get("checkpoints", [])
+        for checkpoint in checkpoints:
             if checkpoint.get("day") == day:
                 checkpoint["status"] = outcome
                 checkpoint["measured"] = measured
+                closed = 0
+                if outcome in CONCLUSIVE:
+                    for later in checkpoints:
+                        if later.get("day", 0) > day and later.get("status") == "pending":
+                            later["status"] = "not_needed"
+                            closed += 1
                 _write(directory, changes)
+                tail = f", {closed} מדידות המשך נסגרו" if closed else ""
                 return Result.success(
-                    "checkpoint_done", f"{change_id} יום {day}: {outcome}"
-                )
+                    "checkpoint_done", f"{change_id} יום {day}: {outcome}{tail}",
+                    follow_up_open=outcome not in CONCLUSIVE)
         return Result.failure("no_checkpoint", f"אין נקודת מדידה ביום {day}")
     return Result.failure("not_found", f"שינוי {change_id} לא נמצא ביומן")
+
+
+def next_checkpoint(entry: dict[str, Any]) -> dict[str, Any] | None:
+    """The next measurement still owed on a change, if any."""
+    pending = [c for c in entry.get("checkpoints", []) if c.get("status") == "pending"]
+    return min(pending, key=lambda c: c.get("day", 0)) if pending else None
+
+
+def applied_between(directory: Path, start: date, end: date) -> list[dict[str, Any]]:
+    """Every change written to the live site inside a date window.
+
+    The control that matters when traffic drops. Before an algorithm update
+    is blamed for anything, the first question is what *we* changed in the
+    same weeks — and that answer has been sitting in this file the whole time.
+    """
+    found: list[dict[str, Any]] = []
+    for change in _read(directory):
+        stamp = change.get("applied_at")
+        if not stamp or change.get("status") == "planned":
+            continue
+        try:
+            applied = datetime.fromisoformat(stamp).date()
+        except ValueError:
+            continue
+        if start <= applied <= end:
+            found.append(change)
+    return sorted(found, key=lambda c: c["applied_at"])

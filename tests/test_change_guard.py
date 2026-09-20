@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -383,20 +383,22 @@ def test_recording_is_idempotent(tmp_path):
     assert len(ledger.load(tmp_path)) == 1
 
 
-def test_checkpoints_land_at_14_28_and_56_days():
-    assert [c["day"] for c in ledger.schedule_checkpoints(NOW)] == [14, 28, 56]
+def test_checkpoints_land_at_28_56_and_84_days():
+    # 28 is the first read, not the verdict; 56 and 84 are there for the pages
+    # whose traffic cannot answer the question in four weeks.
+    assert [c["day"] for c in ledger.schedule_checkpoints(NOW)] == [28, 56, 84]
 
 
 def test_checkpoints_are_not_due_before_their_time(tmp_path):
     ledger.record(make_change(), tmp_path)
-    assert ledger.due_checkpoints(tmp_path, NOW + timedelta(days=13)) == []
+    assert ledger.due_checkpoints(tmp_path, NOW + timedelta(days=27)) == []
 
 
 def test_checkpoint_comes_due(tmp_path):
     ledger.record(make_change(), tmp_path)
-    due = ledger.due_checkpoints(tmp_path, NOW + timedelta(days=15))
+    due = ledger.due_checkpoints(tmp_path, NOW + timedelta(days=29))
     assert len(due) == 1
-    assert due[0]["checkpoint"]["day"] == 14
+    assert due[0]["checkpoint"]["day"] == 28
 
 
 def test_rolled_back_changes_are_not_measured(tmp_path):
@@ -582,3 +584,75 @@ def test_cli_on_a_red_plan_demands_a_typed_confirmation(tmp_path, monkeypatch):
     monkeypatch.setattr("builtins.input", lambda *_: "כן")
     assert plan_mod.main(["approve", "plan_red", "--dir", str(tmp_path)]) == 0
     assert plan_mod.is_approved(red, tmp_path)
+
+
+class TestPlanContext:
+    def test_a_skill_can_carry_what_it_needs_into_publish(self, tmp_path):
+        """The link's target is not part of the payload, but publish has to
+        check it for a 404, and re-deriving it from a summary string is how a
+        rename becomes a silent failure."""
+        built = plan_mod.compose(
+            plan_id="plan_ctx", client="x.com", skill="internal-anchors",
+            url="https://x.com/a", post_id=3, post_type="pages",
+            builder="classic", summary="s", rationale="r",
+            payload={"content": "after"}, inverse={"content": "before"},
+            before_text="before", after_text="after", before_hash="h",
+            risk=risk.assess("", []),
+            context={"target": "https://x.com/b", "phrase": "springs"},
+        )
+        saved = built.data["plan"]
+        plan_mod.save(saved, tmp_path)
+
+        reloaded = plan_mod.load("plan_ctx", tmp_path).data["plan"]
+        assert reloaded.context["target"] == "https://x.com/b"
+
+    def test_context_does_not_change_the_approval_fingerprint(self):
+        def build(context):
+            return plan_mod.compose(
+                plan_id="plan_ctx", client="x.com", skill="s",
+                url="https://x.com/a", post_id=3, post_type="pages",
+                builder="classic", summary="s", rationale="r",
+                payload={"content": "after"}, inverse={"content": "before"},
+                before_text="before", after_text="after", before_hash="h",
+                risk=risk.assess("", []), context=context,
+            ).data["plan"]
+
+        assert build({}).fingerprint == build({"target": "https://x.com/b"}).fingerprint
+
+
+class TestLedgerWindow:
+    def _record(self, tmp_path, change_id: str, when: str, url: str,
+                status: str = "applied"):
+        record = ChangeRecord(
+            change_id=change_id, plan_id="p", skill="content-decay",
+            client="x.com", url=url, post_id=1, before_hash="h",
+            inverse={"content": "before"}, backup_ref="b", backup_verified=True,
+            status=status,
+            applied_at=datetime.fromisoformat(when),
+        )
+        ledger.record(record, tmp_path)
+
+    def test_only_changes_inside_the_window_come_back(self, tmp_path):
+        """Before blaming an update, the first question is what we changed."""
+        self._record(tmp_path, "chg_in", "2025-03-18T10:00:00+00:00",
+                     "https://x.com/a")
+        self._record(tmp_path, "chg_out", "2025-01-02T10:00:00+00:00",
+                     "https://x.com/b")
+
+        found = ledger.applied_between(tmp_path, date(2025, 3, 1), date(2025, 4, 15))
+        assert [c["change_id"] for c in found] == ["chg_in"]
+
+    def test_the_window_edges_are_included(self, tmp_path):
+        self._record(tmp_path, "chg_edge", "2025-03-01T00:30:00+00:00",
+                     "https://x.com/a")
+        assert ledger.applied_between(tmp_path, date(2025, 3, 1), date(2025, 3, 1))
+
+    def test_a_plan_that_was_never_written_is_not_a_change(self, tmp_path):
+        self._record(tmp_path, "chg_planned", "2025-03-18T10:00:00+00:00",
+                     "https://x.com/a", status="planned")
+        assert ledger.applied_between(tmp_path, date(2025, 3, 1),
+                                      date(2025, 4, 15)) == []
+
+    def test_an_empty_ledger_is_not_an_error(self, tmp_path):
+        assert ledger.applied_between(tmp_path, date(2025, 3, 1),
+                                      date(2025, 4, 15)) == []

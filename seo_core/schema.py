@@ -43,9 +43,13 @@ EFFORTS     = ("s", "m", "l")
 
 #: Where a finding's numbers came from. Unknown sources are rejected so a
 #: skill cannot quietly invent a provenance label.
+#:
+#: This is a vocabulary, not an inventory. Live today — something in the
+#: repo stamps them on a finding: gsc_wizard, pagespeed, crawl, derived.
+#: The rest are reserved for sources that are planned and not yet wired.
 SOURCES = (
-    "gsc_wizard",      # GSC Wizard MCP
-    "gsc_api",         # Google Search Console API (fallback engine)
+    "gsc_wizard",      # GSC Wizard MCP — the data is pasted from it, never fetched by us
+    "gsc_api",         # Google Search Console API — planned; no engine exists yet
     "ga4",             # GA4 Data API — conversions, landing-page level
     "clarity",         # Microsoft Clarity
     "pagespeed",       # PageSpeed Insights / CrUX
@@ -268,12 +272,13 @@ def dedupe(findings: list[Finding]) -> list[Finding]:
 # ═══════════════════════════════════════════════════════
 
 ChangeStatus = Literal[
-    "planned",       # approved, not yet written
-    "applied",       # written, technical checks passed
-    "rolled_back",   # undone after a technical failure
-    "verified",      # held up at the 28/56-day check
-    "declined",      # measured worse; Lior chose not to revert
-    "inconclusive",  # no readable signal yet — keep watching
+    "planned",         # approved, not yet written
+    "applied",         # written, technical checks passed
+    "applied_unverified",  # written, but nobody could confirm a visitor sees it
+    "rolled_back",     # undone after a technical failure
+    "verified",        # held up at the 28/56/84-day check
+    "declined",        # measured worse; Lior chose not to revert
+    "inconclusive",    # no readable signal yet — keep watching
 ]
 
 
@@ -305,6 +310,17 @@ class ChangeRecord:
     applied_at: datetime | None = None
     checkpoints: list[dict[str, Any]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+
+    #: Why this was done, carried over from the finding: its type, the query
+    #: and page it was about, and the sentence that justified the estimate.
+    #: A change without it is a diff; with it, it is a decision someone can
+    #: agree or disagree with months later.
+    reason: dict[str, Any] = field(default_factory=dict)
+
+    #: What the page and its target query were doing before the write, with
+    #: the exact window those numbers came from. Without the window a later
+    #: comparison is against an unknown period, which is not a comparison.
+    baseline: dict[str, Any] = field(default_factory=dict)
 
     @property
     def safe_to_auto_rollback(self) -> bool:

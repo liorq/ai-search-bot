@@ -38,15 +38,16 @@ for candidate in (
         break
 
 from seo_core import clients, paths, secrets                            # noqa: E402
-from seo_core.change_guard import checks, ledger, plan as plan_mod       # noqa: E402
+from seo_core.change_guard import checks, ledger, measure                # noqa: E402
+from seo_core.change_guard import plan as plan_mod                       # noqa: E402
 from seo_core.change_guard import risk, rollback                         # noqa: E402
 from seo_core.log import banner, kv, log, rule                           # noqa: E402
 from seo_core.schema import ChangeRecord, save_findings                  # noqa: E402
-from seo_core.sources import queries                                     # noqa: E402
+from seo_core.sources import gsc_wizard, queries                         # noqa: E402
 from seo_core.wp import backup as wp_backup                              # noqa: E402
 from seo_core.wp import content as wp_content                            # noqa: E402
-from seo_core.wp import seo_meta
 from seo_core.wp import rehearsal                                        # noqa: E402
+from seo_core.wp import seo_meta                                         # noqa: E402
 from seo_core.wp import seo_refresh                                      # noqa: E402
 from seo_core.wp.client import WordPressClient                           # noqa: E402
 
@@ -133,11 +134,20 @@ def load_crawl(path: str | None) -> dict[str, str]:
     return {url: str(text) for url, text in (raw.get("pages") or raw).items()}
 
 
-def analyze(domain: str, queries_path: Path, crawl_path: str | None) -> int:
-    client = clients.load(domain)
+def analyze(domain: str, queries_path: str | None, crawl_path: str | None) -> int:
+    client = clients.load(domain)  # מאמת שהלקוח מוגדר לפני שקוראים משהו
     dirs = client_dirs(domain)
 
-    loaded = queries.load_export(queries_path)
+    rows = gsc_wizard.rows_for(client, queries_path)
+    if not rows:
+        log(rows.detail, "ERR")
+        return 1
+    if rows.data["fetched"]:
+        log(rows.detail, "OK")
+        for label, value in rows.data["lines"]:
+            kv(label, value)
+
+    loaded = queries.load_export(rows.data["path"])
     if not loaded:
         log(loaded.detail, "ERR")
         return 1
@@ -157,7 +167,8 @@ def analyze(domain: str, queries_path: Path, crawl_path: str | None) -> int:
         return 0
 
     conversion_rate = None      # ימולא מ-GA4 כשהמודול ייבנה
-    findings = [queries.to_finding(o, domain, curve, conversion_rate)
+    findings = [queries.to_finding(o, domain, curve, conversion_rate,
+                                   completeness=loaded.data["completeness"])
                 for o in opportunities]
     path = save_findings(findings, dirs["reports"] / "onpage_findings.json")
 
@@ -201,15 +212,16 @@ def print_report(domain, opportunities, curve, path, window) -> None:
         top = actionable[0]
         print("\n  הצעד הבא — ההזדמנות הגדולה ביותר:\n")
         if top.kind == "cannibalised":
-            print(f"    איחוד סביב {top.detail['winner']}")
+            print(f"    הדף שצריך להחזיק בשאילתה: {top.detail['winner']}")
             for loser in top.detail["losers"]:
-                print(f"      301 מ-{loser['url']}")
-            print("\n    איחוד אינו פעולה אוטומטית — הוא דורש החלטת תוכן.")
+                print(f"      קישור פנימי והבדלת כותרות ב-{loser['url']} "
+                      f"(מיקום {loser['position']})")
+            print(f"\n    {top.detail['redirect']}.")
         else:
             print(f"    python onpage_optimizer.py --mode plan --client {domain} \\")
             print(f"        --url {top.url} \\")
-            print(f'        --after "<כותרת קיימת>" --heading "<כותרת חדשה>" '
-                  f"--text <קובץ>")
+            print('        --after "<כותרת קיימת>" --heading "<כותרת חדשה>" '
+                  "--text <קובץ>")
 
     print(f"\n  📄 ממצאים מלאים: {path}\n")
 
@@ -368,13 +380,27 @@ def publish(domain: str, plan_id: str) -> int:
         return 1
     log("נכתב", "OK")
 
+    # מטמון שלא נוקה פירושו שהשינוי נשמר אבל אף אחד לא מאשר שרואים אותו.
+    # זה לא פרסום מוצלח, וזה גם לא כישלון שמצדיק שחזור.
+    unverified = "cache_cleared" in written.data and not written.data["cache_cleared"]
+    if unverified:
+        log(written.data["cache_detail"], "WARN")
+        log("הכתיבה נשמרה אבל לא אומת שהמבקר רואה אותה — "
+            "מסומן כפרסום שלא אומת", "WARN")
+
     record = ChangeRecord(
         change_id=change_id, plan_id=plan_id, skill="onpage-optimizer", client=domain,
         url=change_plan.url, post_id=change_plan.post_id,
         before_hash=change_plan.before_hash, inverse=change_plan.inverse,
-        backup_ref=str(backup_path), backup_verified=True, status="applied",
+        backup_ref=str(backup_path), backup_verified=True,
+        status="applied_unverified" if unverified else "applied",
         applied_at=datetime.now(timezone.utc),
         checkpoints=ledger.schedule_checkpoints(datetime.now(timezone.utc)),
+        # Why it was done and what the page was doing beforehand. Without
+        # these two the measurement in 28 days has nothing to compare against
+        # and no way to say what question it is answering.
+        reason=_reason_for(change_plan),
+        baseline=_baseline_for(domain, dirs, change_plan.url, _reason_for(change_plan)),
     )
 
     def fetch(target: str):
@@ -402,10 +428,14 @@ def publish(domain: str, plan_id: str) -> int:
         ledger.record(record, dirs["base"])
         return 1
 
+    if unverified:
+        record.notes.append(written.data["cache_detail"])
     ledger.record(record, dirs["base"])
-    banner("✅ פורסם")
+    banner("⚠️  פורסם — לא אומת" if unverified else "✅ פורסם")
     kv("שינוי", change_id)
-    kv("מדידה חוזרת", "14 · 28 · 56 יום")
+    if unverified:
+        kv("מצב", "נכתב, אבל לא אומת שהמבקר רואה — נקה את מטמון Elementor ובדוק את הדף")
+    kv("מדידה חוזרת", "28 · 56 · 84 יום")
 
     # ציון ה-SEO בתוסף מחושב בדפדפן ולא בשרת, אז הוא נשאר על הגרסה הקודמת.
     plugin = seo_meta.detect_plugin(found.data["payload"])
@@ -417,7 +447,7 @@ def publish(domain: str, plan_id: str) -> int:
             log(caveat, "INFO")
         print(f"\n    {client.cms.base_url.rstrip('/')}"
               f"/wp-admin/post.php?post={change_plan.post_id}&action=edit")
-        print(f"\n  רשימה מרוכזת של כל הדפים שממתינים:")
+        print("\n  רשימה מרוכזת של כל הדפים שממתינים:")
         print(f"    python -m seo_core.wp.seo_refresh --client {domain}")
     print()
     return 0
@@ -427,7 +457,54 @@ def publish(domain: str, plan_id: str) -> int:
 #  שלב 4 — מדידה חוזרת
 # ═══════════════════════════════════════════════════════
 
+def _reason_for(change_plan) -> dict:
+    """The finding that justified the write, kept with the change."""
+    finding = (change_plan.findings or [{}])[0]
+    return {"type": finding.get("type"), "query": finding.get("query"),
+            "instruction": (finding.get("action") or {}).get("instruction",
+                                                             change_plan.summary),
+            "impact_basis": finding.get("impact_basis", change_plan.rationale)}
+
+
+def _baseline_for(domain: str, dirs: dict, url: str, reason: dict) -> dict:
+    """The page's numbers as they stood, from the most recent export on disk.
+
+    Read from the saved export rather than fetched again: the point is to keep
+    the figures the decision was made on, not today's.
+    """
+    exports = sorted((dirs["base"] / "gsc").glob("queries_*.json"))
+    if not exports:
+        return {}
+    loaded = queries.load_export(exports[-1])
+    if not loaded:
+        return {}
+    rows = loaded.data["rows"]
+    window = current_window(rows, url, reason.get("query"))
+    if not window:
+        return {}
+    start, _, end = str(loaded.data["window"]).partition("..")
+    return {**window, "site_clicks": sum(r.clicks for r in rows),
+            "window": {"start": start, "end": end or start},
+            "completeness": loaded.data.get("completeness")}
+
+
+def current_window(rows, url: str, query: str | None) -> dict:
+    """What the page, and the query that was worked on, are doing now."""
+    for_page = [r for r in rows if r.url == url]
+    if query:
+        for_query = [r for r in for_page if r.query == query]
+        if for_query:
+            for_page = for_query
+    if not for_page:
+        return {}
+    impressions = sum(r.impressions for r in for_page)
+    weighted = sum(r.position * r.impressions for r in for_page)
+    return {"clicks": sum(r.clicks for r in for_page), "impressions": impressions,
+            "position": round(weighted / impressions, 2) if impressions else None}
+
+
 def verify(domain: str) -> int:
+    client = clients.load(domain)
     dirs = client_dirs(domain)
     due = ledger.due_checkpoints(dirs["base"])
 
@@ -436,16 +513,51 @@ def verify(domain: str) -> int:
         log("אין מדידות שהגיע זמנן", "OK")
         return 0
 
+    fetched = gsc_wizard.rows_for(client)
+    if not fetched:
+        log(f"{fetched.detail} — אי אפשר למדוד בלי נתונים עדכניים", "ERR")
+        return 1
+    loaded = queries.load_export(fetched.data["path"])
+    if not loaded:
+        log(loaded.detail, "ERR")
+        return 1
+    rows = loaded.data["rows"]
+
+    # The control: the whole property over the same two windows. Without it no
+    # rise can be told apart from a week when everything rose.
+    site_now = sum(r.clicks for r in rows)
+
     for item in due:
         change, checkpoint = item["change"], item["checkpoint"]
-        print(f"\n  {change['url']}")
-        kv("שינוי", change["change_id"])
-        kv("יום", checkpoint["day"])
+        baseline = change.get("baseline") or {}
+        current = current_window(rows, change["url"], (change.get("reason") or {}).get("query"))
+        control = ({"clicks_before": baseline.get("site_clicks"), "clicks_after": site_now}
+                   if baseline.get("site_clicks") else None)
+
+        rule()
+        if not baseline or not current:
+            log(f"{change['change_id']}: אין בסיס השוואה שמור לשינוי הזה — "
+                "נרשם כלא ניתן למדידה", "WARN")
+            ledger.complete_checkpoint(change["change_id"], checkpoint["day"],
+                                       "inconclusive", {"note": "no baseline"}, dirs["base"])
+            continue
+
+        assessment = measure.assess(baseline, current, control,
+                                    loaded.data.get("completeness"))
+        for line in measure.report_lines(change, assessment):
+            print(f"  {line}")
+        ledger.complete_checkpoint(
+            change["change_id"], checkpoint["day"], assessment.verdict,
+            {"current": current, "attributable": assessment.attributable,
+             "reason": assessment.reason}, dirs["base"])
+        if not assessment.conclusive:
+            following = ledger.next_checkpoint(
+                ledger.get(change["change_id"], dirs["base"]).data["change"])
+            if following:
+                log(f"נשאר פתוח — נמדוד שוב ביום {following['day']}", "INFO")
 
     rule()
-    log(f"{len(due)} מדידות ממתינות", "INFO")
-    log("שלוף שאילתות עדכניות והשווה מיקום לשאילתה שטופלה — "
-        "ירידה בדירוג לא מפעילה שחזור אוטומטי", "INFO")
+    log(f"{len(due)} מדידות טופלו. ירידה בדירוג לא מפעילה שחזור אוטומטי", "INFO")
     print()
     return 0
 
@@ -479,10 +591,8 @@ def main(argv: list[str] | None = None) -> int:
             return self_check(args.client)
 
         if args.mode == "analyze":
-            if not args.queries:
-                log("--mode analyze דורש --queries", "ERR")
-                return 1
-            return analyze(args.client, Path(args.queries), args.crawl)
+            # בלי --queries הנתונים נמשכים לבד מ-GSC Wizard.
+            return analyze(args.client, args.queries, args.crawl)
 
         if args.mode == "plan":
             if not (args.url and args.after and args.heading and args.text):

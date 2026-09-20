@@ -1,4 +1,4 @@
-# התקנת ערכת הסקילים ל-SEO — Windows / PowerShell.
+﻿# התקנת ערכת הסקילים ל-SEO — Windows / PowerShell.
 # מקביל ל-install.sh. בטוח להרצה חוזרת — מעדכן במקום.
 #
 # הרצה:
@@ -26,18 +26,34 @@ Write-Host "======================================================="
 Write-Host ""
 
 # ---- python ------------------------------------------------
-# py -3 הוא ה-launcher הרשמי ב-Windows ועובד גם כששם הפקודה שונה.
+# A real interpreter, chosen by asking one to identify itself rather than by
+# name. `python` on Windows is often the Store stub, which exits silently, and
+# the `py` launcher here answered `--version` by opening a REPL.
 $Python = $null
-foreach ($candidate in @("py", "python", "python3")) {
-    $found = Get-Command $candidate -ErrorAction SilentlyContinue
-    if ($found) { $Python = $candidate; break }
+$candidates = @(
+    (Join-Path $env:LOCALAPPDATA "Programs\Python\Python312\python.exe"),
+    (Join-Path $env:LOCALAPPDATA "Programs\Python\Python311\python.exe"),
+    "python", "python3", "py"
+)
+foreach ($candidate in $candidates) {
+    $found = if ($candidate -like "*\*") {
+        if (Test-Path $candidate) { $candidate } else { $null }
+    } else {
+        (Get-Command $candidate -ErrorAction SilentlyContinue).Source
+    }
+    if (-not $found) { continue }
+    $reported = & $found -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>$null
+    if ($LASTEXITCODE -eq 0 -and $reported -match '^\d+\.\d+$') {
+        $Python = $found
+        $PyVersion = $reported
+        break
+    }
 }
 if (-not $Python) {
-    Warn "לא נמצא פייתון. התקן מ-python.org וסמן 'Add Python to PATH'"
+    Warn "לא נמצא פייתון שעונה. התקן מ-python.org וסמן 'Add Python to PATH'"
     exit 1
 }
-$PyArgs = if ($Python -eq "py") { @("-3") } else { @() }
-Ok ("פייתון: " + (& $Python @PyArgs --version 2>&1))
+Ok "פייתון $PyVersion — $Python"
 
 # ---- seo_core ----------------------------------------------
 Info "מעתיק את seo_core ל-$CoreDest"
@@ -63,6 +79,17 @@ if ($installed -eq 0) { Info "אין עדיין סקילים — מותקנת ה
 
 # ---- config ------------------------------------------------
 New-Item -ItemType Directory -Force -Path (Join-Path $SeoDir "data") | Out-Null
+
+# ---- יעדי כתיבה -------------------------------------------
+# רשימה ריקה חוסמת כל כתיבה. זו ברירת המחדל בכוונה: יעד נכנס לכאן רק
+# כשמישהו הוסיף אותו במפורש, ולא כי שם הדומיין נראה כמו סביבת פיתוח.
+$Targets = Join-Path $SeoDir "write_targets.json"
+if (-not (Test-Path $Targets)) {
+    '{"rehearsal": [], "publish": []}' | Set-Content -Path $Targets -Encoding utf8
+    Warn "נוצר $Targets — ריק, ולכן כתיבה חסומה עד שתוסיף יעד"
+} else {
+    Ok "write_targets.json קיים — לא נדרס"
+}
 
 $EnvFile = Join-Path $SeoDir ".env"
 if (-not (Test-Path $EnvFile)) {
@@ -126,13 +153,35 @@ if ($Desktop) {
 }
 
 # ---- בדיקת שפיות -------------------------------------------
+# Every installed skill is asked to answer, from the installed copy rather than
+# the repo. A skill that imports here is a skill a fresh session can run.
 Info "מריץ בדיקת תקינות"
 $env:PYTHONPATH = $CoreDest
-& $Python @PyArgs -c "from seo_core.schema import Finding; from seo_core.clients import load_all" 2>$null
+& $Python -c "from seo_core.schema import Finding; from seo_core.clients import load_all" 2>$null
 if ($LASTEXITCODE -eq 0) {
     Ok "seo_core נטען בהצלחה"
 } else {
     Warn "seo_core לא נטען — נדרש פייתון 3.10 ומעלה"
+    exit 1
+}
+
+$checked = 0
+$broken = @()
+Get-ChildItem -Path $SkillsDest -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+    $script = Get-ChildItem (Join-Path $_.FullName "scripts") -Filter *.py -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if (-not $script) { return }          # סקיל הוראות בלבד — אין מה לייבא
+    # מריצים מחוץ לריפו, כי משם סשן חדש יריץ אותו: סקריפט שמוצא את seo_core רק
+    # כשהוא יושב בעץ הפיתוח נראה תקין כאן ונשבר אצל המשתמש.
+    Push-Location $HOME
+    & $Python $script.FullName --help *> $null
+    if ($LASTEXITCODE -eq 0) { $checked++ } else { $broken += $_.Name }
+    Pop-Location
+}
+if ($broken.Count -eq 0) {
+    Ok "$checked סקריפטים נטענים מההתקנה"
+} else {
+    Warn ("סקילים שלא נטענים: " + ($broken -join ", "))
 }
 
 Write-Host ""

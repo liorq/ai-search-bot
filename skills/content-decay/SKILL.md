@@ -47,29 +47,22 @@ python scripts/content_decay.py --self-check --client example.com
 
 ### שלב 1: שליפת הנתונים
 
-**זה החלק שלך.** כלי MCP זמינים לקלוד ולא לתהליך פייתון, אז שלוף מ-GSC Wizard
-והרכב JSON במבנה הזה:
+**הסקריפט מושך את שני החלונות לבד** מ-GSC Wizard. נדרשים `gsc_property`
+ב-`clients.json` ו-`GSC_WIZARD_API_KEY` ב-`~/.claude/seo/.env`.
+`--gsc-data <קובץ>` עדיין עובד, לשחזור הרצה על ייצוא שמור.
 
-```json
-{
-  "property": "sc-domain:example.com",
-  "current": {"range": "28d", "pages": [
-    {"url": "...", "clicks": 120, "impressions": 4500, "position": 9.1,
-     "queries": [{"query": "...", "clicks": 40, "impressions": 900, "position": 8.2}]}
-  ]},
-  "prior": {"range": "28d אשתקד", "pages": [...]},
-  "site": {"clicks_pct": -0.04},
-  "algorithm_updates": ["2026-08-12"]
-}
-```
+ההשוואה היא מול **אותה תקופה אשתקד**, לא מול החודש הקודם — אחרת עונתיות תיראה
+כמו דעיכה. היא דורשת כ-**13 חודשי היסטוריה**, בתוך 16 החודשים ש-Search Console
+מחזיק בעצמו.
 
-`prior` היא **אותה תקופה אשתקד**, לא החודש הקודם — אחרת עונתיות תיראה כמו דעיכה.
-ל-GSC Wizard יש 10 שנות היסטוריה, הרבה מעבר למגבלת 16 החודשים של גוגל.
+לנכס צעיר מזה אין מול מה להשוות, והסקיל **עוצר ואומר שהבדיקה חסומה** — הוא לא
+מדווח "אין ירידה". במקרה כזה `--compare previous` משווה מול 28 הימים הקודמים,
+וכל ממצא נושא אזהרה שההשוואה הזו לא מבדילה בין דעיכה לעונתיות.
 
 ### שלב 2: ניתוח
 
 ```bash
-python scripts/content_decay.py --mode analyze --client example.com --gsc-data gsc.json
+python scripts/content_decay.py --mode analyze --client example.com
 ```
 
 הפלט:

@@ -305,13 +305,74 @@ def test_a_ctr_problem_claims_no_click_impact_of_its_own():
     assert finding.action["kind"] == "rewrite_title"
 
 
-def test_consolidation_is_priced_as_expensive_work():
+def test_split_rankings_never_recommend_a_redirect():
+    # A query table cannot see the losing URL's links, traffic or conversions,
+    # so a 301 is not something it is entitled to propose.
     curve = site_curve()
     opportunity = queries.find_cannibalisation([
         row(url=PAGE, clicks=40, impressions=900, position=6.0),
         row(url=OTHER, clicks=5, impressions=400, position=14.0),
     ], curve)[0]
-    assert queries.to_finding(opportunity, "x.com", curve).effort == "l"
+    finding = queries.to_finding(opportunity, "x.com", curve)
+    assert finding.action["kind"] == "differentiate" and finding.effort == "m"
+    assert "301" not in finding.action["instruction"]
+    assert "אישור מפורש" in finding.action["redirect"]
+
+
+# Each of these is a mistake the first version made on a real site (sass-srq.com,
+# 2026-09): 20 of its 22 findings were not real, and two told the owner to
+# redirect the home page.
+
+HOME = "https://x.com/"
+
+
+def test_a_rival_ranking_on_page_five_is_not_in_the_game():
+    assert queries.find_cannibalisation([
+        row(url=PAGE, clicks=1, impressions=1650, position=6.7),
+        row(url=OTHER, clicks=0, impressions=400, position=68.0),
+    ], site_curve()) == []
+
+
+def test_the_home_page_is_never_a_rival():
+    # On a local query its impressions come from the map pack's website button.
+    assert queries.find_cannibalisation([
+        row(url=PAGE, clicks=3, impressions=120, position=9.0),
+        row(url=HOME, clicks=0, impressions=90, position=1.0),
+    ], site_curve()) == []
+
+
+def test_a_brand_search_with_sitelinks_is_not_cannibalisation():
+    assert queries.find_cannibalisation([
+        row(url=HOME, clicks=11, impressions=50, position=1.3),
+        row(url=PAGE, clicks=0, impressions=47, position=1.8),
+        row(url=OTHER, clicks=0, impressions=41, position=1.8),
+    ], site_curve()) == []
+
+
+def test_two_close_pages_are_caught_even_when_each_has_few_impressions():
+    # 27 and 31 impressions at positions 9 and 11 — the old per-URL floor of 30
+    # threw this away, and it was the clearest real case on the site.
+    found = queries.find_cannibalisation([
+        row(url=PAGE, clicks=0, impressions=31, position=10.8),
+        row(url=OTHER, clicks=0, impressions=27, position=9.0),
+    ], site_curve())
+    assert len(found) == 1 and found[0].detail["losers"][0]["share"] > 0.4
+
+
+def test_a_rival_with_a_sliver_of_the_impressions_is_ignored():
+    assert queries.find_cannibalisation([
+        row(url=PAGE, clicks=5, impressions=950, position=6.0),
+        row(url=OTHER, clicks=0, impressions=50, position=12.0),
+    ], site_curve()) == []
+
+
+def test_an_estimate_built_on_a_minority_of_the_clicks_says_so():
+    curve = site_curve()
+    opportunity = queries.find_near_misses([row(position=9.0, clicks=25)], curve)[0]
+    cover = {"truncated": False, "anonymised_share": 0.24, "anonymised_click_share": 0.61}
+    finding = queries.to_finding(opportunity, "x.com", curve, completeness=cover)
+    assert "61%" in finding.impact_basis
+    assert finding.evidence["data_coverage"]["hidden_click_share"] == 0.61
 
 
 def test_conversions_are_expressed_only_when_the_client_measures_them():

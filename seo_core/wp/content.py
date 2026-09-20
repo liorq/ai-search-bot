@@ -40,6 +40,10 @@ ELEMENTOR_DATA_KEY = "_elementor_data"
 
 #: Elementor caches generated CSS per post. An edit that skips the cache bump
 #: can render with the previous layout's styles until something else clears it.
+#: Elementor's generated CSS descriptor. Read-only as far as we are concerned:
+#: it is not exposed in REST, so it cannot be read or written truthfully, and
+#: Elementor rebuilds it from the tree. Kept as a name so nothing reintroduces
+#: it by accident.
 ELEMENTOR_CSS_KEY = "_elementor_css"
 
 _BLOCK_OPEN = re.compile(r"<!--\s*wp:")
@@ -270,20 +274,13 @@ def _insert_elementor_section(
     return Result.success(
         "composed",
         f"סעיף {new_heading!r} יתווסף אחרי {after_heading!r} באותה עמודה",
-        payload={
-            "meta": {
-                ELEMENTOR_DATA_KEY: json.dumps(tree, ensure_ascii=False),
-                ELEMENTOR_CSS_KEY: "",
-            }
-        },
-        inverse={
-            "meta": {
-                ELEMENTOR_DATA_KEY: json.dumps(
-                    content.elementor_tree, ensure_ascii=False
-                ),
-                ELEMENTOR_CSS_KEY: (content.meta or {}).get(ELEMENTOR_CSS_KEY, ""),
-            }
-        },
+        # `_elementor_css` is deliberately not written. It is not exposed in
+        # REST, so setting it was a no-op that looked like cache handling and
+        # was not; the cache is cleared through Elementor's own endpoint after
+        # the write instead. See WordPressClient.clear_elementor_cache.
+        payload={"meta": {ELEMENTOR_DATA_KEY: json.dumps(tree, ensure_ascii=False)}},
+        inverse={"meta": {ELEMENTOR_DATA_KEY: json.dumps(
+            content.elementor_tree, ensure_ascii=False)}},
         builder="elementor",
         needs_css_regeneration=True,
     )
@@ -365,21 +362,12 @@ def _insert_elementor(content: PostContent, heading: str, paragraph: str) -> Res
     return Result.success(
         "composed",
         f"ווידג'ט טקסט יתווסף אחרי {heading!r} באותה עמודה",
-        payload={
-            "meta": {
-                ELEMENTOR_DATA_KEY: json.dumps(tree, ensure_ascii=False),
-                # Bumping the cached CSS forces Elementor to regenerate it.
-                ELEMENTOR_CSS_KEY: "",
-            }
-        },
-        inverse={
-            "meta": {
-                ELEMENTOR_DATA_KEY: json.dumps(
-                    content.elementor_tree, ensure_ascii=False
-                ),
-                ELEMENTOR_CSS_KEY: (content.meta or {}).get(ELEMENTOR_CSS_KEY, ""),
-            }
-        },
+        # `_elementor_css` is deliberately not written — see the note in
+        # `_insert_elementor_section`. The cache is cleared after the write,
+        # through Elementor's own endpoint.
+        payload={"meta": {ELEMENTOR_DATA_KEY: json.dumps(tree, ensure_ascii=False)}},
+        inverse={"meta": {ELEMENTOR_DATA_KEY: json.dumps(
+            content.elementor_tree, ensure_ascii=False)}},
         builder="elementor",
         needs_css_regeneration=True,
     )
@@ -572,3 +560,268 @@ def _escape_body(text: str) -> str:
     if re.search(r"</?(a|strong|em|b|i|br)\b", text, re.I):
         return text
     return html.escape(text, quote=False)
+
+
+# ═══════════════════════════════════════════════════════
+#  Linking a phrase that is already on the page
+# ═══════════════════════════════════════════════════════
+
+#: Widget settings that hold rich text in an Elementor tree.
+_ELEMENTOR_TEXT_KEYS = ("editor", "text", "description_text")
+
+_TOKENS = re.compile(r"(<[^>]+>)")
+_HEADING_TAG = re.compile(r"</?h[1-6]\b", re.I)
+
+
+def _link_first_occurrence(markup: str, phrase: str, href: str) -> str | None:
+    """Wrap the first eligible occurrence of `phrase` in a link.
+
+    Eligible means in body text: not inside a tag's attributes, not inside an
+    anchor that already exists, and not inside a heading. Linking a heading
+    changes what the page is about; nesting an anchor produces markup no
+    browser agrees on; and matching inside an attribute would corrupt the page
+    outright.
+
+    Returns None when no eligible occurrence exists, so the caller can say so
+    instead of reporting a change that did not happen.
+    """
+    pattern = re.compile(rf"\b{re.escape(phrase)}\b", re.I | re.U)
+    tokens = _TOKENS.split(markup)
+
+    in_anchor = 0
+    in_heading = 0
+    for index, token in enumerate(tokens):
+        if index % 2:                                  # a tag
+            lowered = token.lower()
+            if lowered.startswith("<a") and not lowered.startswith("</a"):
+                in_anchor += 1
+            elif lowered.startswith("</a"):
+                in_anchor = max(0, in_anchor - 1)
+            elif _HEADING_TAG.match(token):
+                in_heading = 0 if lowered.startswith("</") else in_heading + 1
+            continue
+
+        if in_anchor or in_heading or not token.strip():
+            continue
+
+        match = pattern.search(token)
+        if not match:
+            continue
+
+        anchor = match.group(0)
+        tokens[index] = (
+            token[: match.start()]
+            + f'<a href="{href}">{anchor}</a>'
+            + token[match.end():]
+        )
+        return "".join(tokens)
+
+    return None
+
+
+def link_phrase(
+    content: PostContent, phrase: str, target_url: str
+) -> Result:
+    """Turn a phrase the page already says into a link to another page.
+
+    This is the safest internal link there is: the sentence was written by a
+    human, the phrase is already in it, and nothing is added or removed —
+    only wrapped. It is also idempotent, which matters more here than
+    elsewhere, because running a link-building pass twice on the same page is
+    the obvious way to end up with the same link twice in one paragraph.
+    """
+    if not phrase.strip():
+        return Result.failure("empty_phrase", "לא נמסר ביטוי לקישור")
+    if not target_url.strip():
+        return Result.failure("empty_target", "לא נמסרה כתובת יעד")
+
+    if content.builder == "elementor":
+        return _link_elementor(content, phrase, target_url)
+    return _link_markup(content, phrase, target_url)
+
+
+def _already_links(markup: str, target_url: str) -> bool:
+    return bool(re.search(
+        rf"""href\s*=\s*["']{re.escape(target_url)}/?["']""", markup, re.I))
+
+
+def _link_markup(content: PostContent, phrase: str, target_url: str) -> Result:
+    markup = content.raw_content
+    if _already_links(markup, target_url):
+        return Result.failure(
+            "already_linked",
+            f"הדף כבר מקשר ל-{target_url} — אין מה להוסיף",
+            recoverable=True,
+        )
+
+    updated = _link_first_occurrence(markup, phrase, target_url)
+    if updated is None:
+        return Result.failure(
+            "phrase_not_found",
+            f"הביטוי {phrase!r} לא נמצא בטקסט הגוף של הדף — "
+            "ייתכן שהוא רק בכותרת, בתפריט, או כבר בתוך קישור",
+            recoverable=True,
+        )
+
+    return Result.success(
+        "composed",
+        f"הביטוי {phrase!r} יקושר ל-{target_url}",
+        payload={"content": updated},
+        inverse={"content": markup},
+        builder=content.builder,
+    )
+
+
+def _link_elementor(content: PostContent, phrase: str, target_url: str) -> Result:
+    tree = json.loads(json.dumps(content.elementor_tree))      # deep copy
+    # Checked against the widgets' own text, not the serialised tree: JSON
+    # escaping puts a backslash before every quote, so a search for
+    # `href="..."` over the serialised form finds nothing and the skill adds
+    # a link the page already has.
+    existing = " ".join(_collect_elementor_text(tree))
+    if _already_links(existing, target_url):
+        return Result.failure(
+            "already_linked",
+            f"הדף כבר מקשר ל-{target_url} — אין מה להוסיף",
+            recoverable=True,
+        )
+
+    if not _link_in_widgets(tree, phrase, target_url):
+        return Result.failure(
+            "phrase_not_found",
+            f"הביטוי {phrase!r} לא נמצא בטקסט של אף ווידג'ט בעץ של Elementor",
+            recoverable=True,
+        )
+
+    return Result.success(
+        "composed",
+        f"הביטוי {phrase!r} יקושר ל-{target_url}",
+        # `_elementor_css` is deliberately not written. It is not exposed in
+        # REST, so setting it was a no-op that looked like cache handling and
+        # was not; the cache is cleared through Elementor's own endpoint after
+        # the write instead. See WordPressClient.clear_elementor_cache.
+        payload={"meta": {ELEMENTOR_DATA_KEY: json.dumps(tree, ensure_ascii=False)}},
+        inverse={"meta": {ELEMENTOR_DATA_KEY: json.dumps(
+            content.elementor_tree, ensure_ascii=False)}},
+        builder="elementor",
+        needs_css_regeneration=True,
+    )
+
+
+def _link_in_widgets(
+    elements: list[dict[str, Any]], phrase: str, target_url: str
+) -> bool:
+    """Link the phrase in the first text widget that carries it."""
+    for element in elements:
+        settings = element.get("settings") or {}
+        for key in _ELEMENTOR_TEXT_KEYS:
+            value = settings.get(key)
+            if not isinstance(value, str) or not value.strip():
+                continue
+            updated = _link_first_occurrence(value, phrase, target_url)
+            if updated is not None:
+                settings[key] = updated
+                return True
+
+        children = element.get("elements")
+        if isinstance(children, list) and _link_in_widgets(children, phrase, target_url):
+            return True
+    return False
+
+
+# ═══════════════════════════════════════════════════════
+#  Pointing an existing link somewhere else
+# ═══════════════════════════════════════════════════════
+
+def retarget_link(content: PostContent, old_url: str, new_url: str) -> Result:
+    """Repoint every link to `old_url` at `new_url`, changing nothing else.
+
+    This is what a redirect chain costs to clean up: the link text stays, the
+    sentence stays, only the destination moves to where the redirect was
+    sending the visitor anyway. Mechanical, reversible, and tedious enough by
+    hand that it never gets done.
+
+    Both the bare URL and its trailing-slash form are matched, because a
+    theme and an editor rarely agree on which one to write.
+    """
+    if not old_url.strip() or not new_url.strip():
+        return Result.failure("empty_url", "צריך גם כתובת ישנה וגם חדשה")
+    if old_url.strip() == new_url.strip():
+        return Result.failure("same_url", "הכתובת הישנה והחדשה זהות")
+
+    if content.builder == "elementor":
+        return _retarget_elementor(content, old_url, new_url)
+
+    updated, count = _replace_href(content.raw_content, old_url, new_url)
+    if not count:
+        return Result.failure(
+            "link_not_found",
+            f"לא נמצא קישור ל-{old_url} בגוף הדף",
+            recoverable=True,
+        )
+    return Result.success(
+        "composed",
+        f"{count} קישורים יופנו מ-{old_url} ל-{new_url}",
+        payload={"content": updated},
+        inverse={"content": content.raw_content},
+        builder=content.builder, links_changed=count,
+    )
+
+
+def _href_pattern(url: str) -> re.Pattern[str]:
+    return re.compile(
+        rf"""(href\s*=\s*["']){re.escape(url.rstrip('/'))}/?(["'])""", re.I)
+
+
+def _replace_href(markup: str, old_url: str, new_url: str) -> tuple[str, int]:
+    return _href_pattern(old_url).subn(rf"\g<1>{new_url}\g<2>", markup)
+
+
+def _retarget_elementor(content: PostContent, old_url: str, new_url: str) -> Result:
+    tree = json.loads(json.dumps(content.elementor_tree))      # deep copy
+    count = _retarget_in_widgets(tree, old_url, new_url)
+    if not count:
+        return Result.failure(
+            "link_not_found",
+            f"לא נמצא קישור ל-{old_url} בעץ של Elementor",
+            recoverable=True,
+        )
+
+    return Result.success(
+        "composed",
+        f"{count} קישורים יופנו מ-{old_url} ל-{new_url}",
+        payload={"meta": {ELEMENTOR_DATA_KEY: json.dumps(tree, ensure_ascii=False)}},
+        inverse={"meta": {ELEMENTOR_DATA_KEY: json.dumps(
+            content.elementor_tree, ensure_ascii=False)}},
+        builder="elementor", links_changed=count,
+        needs_css_regeneration=True,
+    )
+
+
+def _retarget_in_widgets(node: Any, old_url: str, new_url: str) -> int:
+    """Walk the whole tree, repointing hrefs in text and in link settings.
+
+    Elementor keeps a button's destination in `settings.link.url`, not in any
+    markup, so a search for `href=` alone would leave every button pointing at
+    the redirect.
+    """
+    changed = 0
+    bare = old_url.rstrip("/")
+
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "url" and isinstance(value, str) and value.rstrip("/") == bare:
+                node[key] = new_url
+                changed += 1
+            elif isinstance(value, str) and "href" in value.lower():
+                replaced, count = _replace_href(value, old_url, new_url)
+                if count:
+                    node[key] = replaced
+                    changed += count
+            else:
+                changed += _retarget_in_widgets(value, old_url, new_url)
+    elif isinstance(node, list):
+        for item in node:
+            changed += _retarget_in_widgets(item, old_url, new_url)
+
+    return changed

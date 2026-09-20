@@ -47,18 +47,10 @@ description: >
 
 ### שלב 1: הנתונים
 
-**זה החלק שלך.** שלוף מ-GSC Wizard שאילתות עם הדף שדורג:
-
-```json
-{
-  "property": "sc-domain:example.com",
-  "range": "28d",
-  "rows": [
-    {"query": "spring replacement cost", "url": "https://example.com/springs",
-     "clicks": 24, "impressions": 1840, "position": 8.4}
-  ]
-}
-```
+**הסקריפט מושך אותם לבד.** אל תשלוף שאילתות ידנית ואל תבנה קובץ — הסקריפט
+פונה ל-GSC Wizard, שומר את החלון הסגור האחרון ומדווח מה הוא כיסה. נדרשים
+`gsc_property` ב-`clients.json` ו-`GSC_WIZARD_API_KEY` ב-`~/.claude/seo/.env`.
+`--queries <קובץ>` עדיין עובד, כדי לשחזר הרצה על ייצוא שמור.
 
 ובנוסף, לבדיקת הכיסוי — הטקסט הגלוי של כל דף:
 
@@ -72,7 +64,7 @@ description: >
 
 ```bash
 python scripts/onpage_optimizer.py --mode analyze --client example.com \
-    --queries queries.json --crawl pages.json
+    --crawl pages.json
 ```
 
 ```

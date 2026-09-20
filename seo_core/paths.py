@@ -73,7 +73,8 @@ def uses_mode_bits() -> bool:
 
 def is_synced(path: Path) -> bool:
     """Whether this path sits inside a folder that replicates to a cloud."""
-    text = str(path).lower()
+    # as_posix: the markers use "/", and str() on Windows gives "\onedrive".
+    text = path.as_posix().lower()
     return any(marker in text for marker in SYNCED_MARKERS)
 
 
