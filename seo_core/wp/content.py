@@ -40,6 +40,10 @@ ELEMENTOR_DATA_KEY = "_elementor_data"
 
 #: Elementor caches generated CSS per post. An edit that skips the cache bump
 #: can render with the previous layout's styles until something else clears it.
+#: Elementor's generated CSS descriptor. Read-only as far as we are concerned:
+#: it is not exposed in REST, so it cannot be read or written truthfully, and
+#: Elementor rebuilds it from the tree. Kept as a name so nothing reintroduces
+#: it by accident.
 ELEMENTOR_CSS_KEY = "_elementor_css"
 
 _BLOCK_OPEN = re.compile(r"<!--\s*wp:")
@@ -270,20 +274,13 @@ def _insert_elementor_section(
     return Result.success(
         "composed",
         f"סעיף {new_heading!r} יתווסף אחרי {after_heading!r} באותה עמודה",
-        payload={
-            "meta": {
-                ELEMENTOR_DATA_KEY: json.dumps(tree, ensure_ascii=False),
-                ELEMENTOR_CSS_KEY: "",
-            }
-        },
-        inverse={
-            "meta": {
-                ELEMENTOR_DATA_KEY: json.dumps(
-                    content.elementor_tree, ensure_ascii=False
-                ),
-                ELEMENTOR_CSS_KEY: (content.meta or {}).get(ELEMENTOR_CSS_KEY, ""),
-            }
-        },
+        # `_elementor_css` is deliberately not written. It is not exposed in
+        # REST, so setting it was a no-op that looked like cache handling and
+        # was not; the cache is cleared through Elementor's own endpoint after
+        # the write instead. See WordPressClient.clear_elementor_cache.
+        payload={"meta": {ELEMENTOR_DATA_KEY: json.dumps(tree, ensure_ascii=False)}},
+        inverse={"meta": {ELEMENTOR_DATA_KEY: json.dumps(
+            content.elementor_tree, ensure_ascii=False)}},
         builder="elementor",
         needs_css_regeneration=True,
     )
@@ -365,21 +362,12 @@ def _insert_elementor(content: PostContent, heading: str, paragraph: str) -> Res
     return Result.success(
         "composed",
         f"ווידג'ט טקסט יתווסף אחרי {heading!r} באותה עמודה",
-        payload={
-            "meta": {
-                ELEMENTOR_DATA_KEY: json.dumps(tree, ensure_ascii=False),
-                # Bumping the cached CSS forces Elementor to regenerate it.
-                ELEMENTOR_CSS_KEY: "",
-            }
-        },
-        inverse={
-            "meta": {
-                ELEMENTOR_DATA_KEY: json.dumps(
-                    content.elementor_tree, ensure_ascii=False
-                ),
-                ELEMENTOR_CSS_KEY: (content.meta or {}).get(ELEMENTOR_CSS_KEY, ""),
-            }
-        },
+        # `_elementor_css` is deliberately not written — see the note in
+        # `_insert_elementor_section`. The cache is cleared after the write,
+        # through Elementor's own endpoint.
+        payload={"meta": {ELEMENTOR_DATA_KEY: json.dumps(tree, ensure_ascii=False)}},
+        inverse={"meta": {ELEMENTOR_DATA_KEY: json.dumps(
+            content.elementor_tree, ensure_ascii=False)}},
         builder="elementor",
         needs_css_regeneration=True,
     )
@@ -708,20 +696,13 @@ def _link_elementor(content: PostContent, phrase: str, target_url: str) -> Resul
     return Result.success(
         "composed",
         f"הביטוי {phrase!r} יקושר ל-{target_url}",
-        payload={
-            "meta": {
-                ELEMENTOR_DATA_KEY: json.dumps(tree, ensure_ascii=False),
-                ELEMENTOR_CSS_KEY: "",
-            }
-        },
-        inverse={
-            "meta": {
-                ELEMENTOR_DATA_KEY: json.dumps(
-                    content.elementor_tree, ensure_ascii=False
-                ),
-                ELEMENTOR_CSS_KEY: (content.meta or {}).get(ELEMENTOR_CSS_KEY, ""),
-            }
-        },
+        # `_elementor_css` is deliberately not written. It is not exposed in
+        # REST, so setting it was a no-op that looked like cache handling and
+        # was not; the cache is cleared through Elementor's own endpoint after
+        # the write instead. See WordPressClient.clear_elementor_cache.
+        payload={"meta": {ELEMENTOR_DATA_KEY: json.dumps(tree, ensure_ascii=False)}},
+        inverse={"meta": {ELEMENTOR_DATA_KEY: json.dumps(
+            content.elementor_tree, ensure_ascii=False)}},
         builder="elementor",
         needs_css_regeneration=True,
     )
@@ -809,19 +790,9 @@ def _retarget_elementor(content: PostContent, old_url: str, new_url: str) -> Res
     return Result.success(
         "composed",
         f"{count} קישורים יופנו מ-{old_url} ל-{new_url}",
-        payload={
-            "meta": {
-                ELEMENTOR_DATA_KEY: json.dumps(tree, ensure_ascii=False),
-                ELEMENTOR_CSS_KEY: "",
-            }
-        },
-        inverse={
-            "meta": {
-                ELEMENTOR_DATA_KEY: json.dumps(
-                    content.elementor_tree, ensure_ascii=False),
-                ELEMENTOR_CSS_KEY: (content.meta or {}).get(ELEMENTOR_CSS_KEY, ""),
-            }
-        },
+        payload={"meta": {ELEMENTOR_DATA_KEY: json.dumps(tree, ensure_ascii=False)}},
+        inverse={"meta": {ELEMENTOR_DATA_KEY: json.dumps(
+            content.elementor_tree, ensure_ascii=False)}},
         builder="elementor", links_changed=count,
         needs_css_regeneration=True,
     )

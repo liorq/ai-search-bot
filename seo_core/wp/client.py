@@ -29,6 +29,9 @@ USER_AGENT      = "seo-toolkit/1.0 (+WordPress REST)"
 #: unknown custom post type without understanding its template is reckless.
 EDITABLE_POST_TYPES = ("post", "page")
 
+#: The one meta key whose change nobody sees until Elementor re-renders.
+ELEMENTOR_DATA_KEY = "_elementor_data"
+
 
 class Transport(Protocol):
     """The slice of `requests.Session` this module uses.
@@ -125,7 +128,7 @@ class WordPressClient:
             self._transport = session
         return self._transport
 
-    def _call(self, method: str, url: str, **kwargs: Any) -> Result:
+    def _call(self, method: str, url: str, expect_json: bool = True, **kwargs: Any) -> Result:
         kwargs.setdefault("timeout", REQUEST_TIMEOUT)
 
         guarded = self.write_guard is not None and method.upper() in targets.WRITE_METHODS
@@ -172,6 +175,11 @@ class WordPressClient:
         try:
             payload = response.json()
         except Exception:
+            if not expect_json:
+                # Some endpoints answer 200 with an empty body. Elementor's
+                # cache route is one; calling that a failure would report a
+                # cache that was cleared as a cache that was not.
+                return Result.success("ok", "בוצע", payload=None, status=status)
             return Result.failure("bad_payload", "התשובה מהשרת אינה JSON תקין")
 
         return Result.success("ok", "בוצע", payload=payload, status=status)
@@ -319,7 +327,38 @@ class WordPressClient:
         if not payload:
             return Result.failure("empty_write", "לא נשלח שום שינוי")
 
-        return self._call("POST", f"{self.api}/{post_type}/{post_id}", json=payload)
+        written = self._call("POST", f"{self.api}/{post_type}/{post_id}", json=payload)
+        if written and meta and ELEMENTOR_DATA_KEY in meta:
+            # The widget tree is saved, and the visitor still gets the old HTML:
+            # Elementor caches a page's rendered markup per document, and only
+            # its own save path clears it. Measured on Elementor 4.2 — a new
+            # widget, and even an edit to an existing one, stayed invisible
+            # until this ran. A write nobody can see is not a write.
+            cleared = self.clear_elementor_cache()
+            written.data["cache_cleared"] = bool(cleared)
+            written.data["cache_detail"] = cleared.detail
+        return written
+
+    def clear_elementor_cache(self) -> Result:
+        """Make Elementor re-render. Site-wide, because that is what it offers.
+
+        This is the endpoint behind "Regenerate Files & Data" in Elementor's
+        own Tools screen. It throws away generated markup and CSS; nothing
+        authored is touched, and the next visitor pays one re-render.
+        """
+        cleared = self._call("DELETE", f"{self.base_url}/wp-json/elementor/v1/cache",
+                             expect_json=False)
+        if cleared:
+            return Result.success("cache_cleared", "המטמון של Elementor נוקה")
+        if cleared.code == "not_found":
+            return Result.failure(
+                "cache_endpoint_missing",
+                "לא נמצאה נקודת הקצה לניקוי המטמון של Elementor — "
+                "גרסה ישנה מדי. שינוי בדף עלול לא להופיע למבקרים",
+                recoverable=True)
+        return Result.failure("cache_not_cleared",
+                              f"ניקוי המטמון של Elementor נכשל: {cleared.detail}",
+                              recoverable=True)
 
     def list_posts(self, post_type: str = "pages", per_page: int = 20) -> Result:
         """Recent posts of a type, newest first.

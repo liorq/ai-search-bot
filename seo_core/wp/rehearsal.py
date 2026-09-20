@@ -167,6 +167,11 @@ def run(
     if not written:
         return fail("write", f"הכתיבה נכשלה: {written.detail}")
     drill.steps.append(Step("write", True, "נכתב"))
+    # An Elementor page serves cached markup; without this the next step asks
+    # the visitor a question the cache has already answered.
+    if "cache_cleared" in written.data:
+        drill.steps.append(Step("elementor_cache", written.data["cache_cleared"],
+                                written.data["cache_detail"]))
 
     # ── 6. האם הכתיבה באמת נחתה ───────────────────────
     landed = _reread(wp, page.post_id, post_type)
@@ -234,6 +239,12 @@ def run(
     drill.steps.append(Step(
         "confirm_restore", True,
         f"חזר ל-hash {original_hash}, ו-{len(changed_fields(snapshot)) or 1} שדות אומתו אחד-אחד"))
+
+    # ── 9. והאם המבקר חזר לראות את המקור ──────────────
+    # השדות יכולים לחזור בזמן שהמטמון עדיין מגיש את הגרסה עם הסימון.
+    if fetch is not None:
+        gone = _marker_gone(fetch, url, marker_id)
+        drill.steps.append(gone)
 
     drill.passed = all(step.ok for step in drill.steps)
     drill.completed_at = datetime.now(timezone.utc).isoformat()
@@ -304,6 +315,21 @@ def _field_value(snapshot: Any, page: Any, field: str) -> tuple[Any, Any]:
     return (snapshot.meta or {}).get(key), (page.meta or {}).get(key)
 
 
+def _same(before: Any, after: Any) -> bool:
+    """Whether a field came back, as WordPress would judge it.
+
+    `get_post_meta($id, $key, true)` returns an empty string for a key that
+    does not exist, so absent and empty are the same value to every reader.
+    Elementor's `_elementor_css` cache key is stored empty and comes back
+    absent, and reporting that as a lost field would cry wolf on every drill.
+    A field that held real text and comes back empty is still a difference.
+    """
+    empty = (None, "")
+    if before in empty and after in empty:
+        return True
+    return before == after
+
+
 def compare_fields(snapshot: Any, page: Any, limit: int = 120) -> list[dict[str, Any]]:
     """Which of the backed-up fields did NOT come back.
 
@@ -317,7 +343,7 @@ def compare_fields(snapshot: Any, page: Any, limit: int = 120) -> list[dict[str,
     differences = []
     for name in changed_fields(snapshot):
         before, after = _field_value(snapshot, page, name)
-        if before != after:
+        if not _same(before, after):
             differences.append({"field": name, "before": show(before), "after": show(after)})
     return differences
 
@@ -342,6 +368,27 @@ def _marker_visible(fetch: Fetcher, url: str, marker_id: str) -> Step:
         "rendered", present,
         "הפסקה נמצאה ב-HTML הגולמי" if present else
         "הפסקה לא נמצאה ב-HTML — ייתכן cache או שהעריכה לא נכנסה לתבנית",
+    )
+
+
+def _marker_gone(fetch: Fetcher, url: str, marker_id: str) -> Step:
+    """And did the visitor stop seeing it?
+
+    The fields can be back while a cache still serves the page with the marker
+    on it. Restoring the data is half the job; restoring what people see is
+    the other half.
+    """
+    try:
+        status, html = fetch(url)
+    except Exception as exc:
+        return Step("display_restored", False, f"שגיאה בטעינת הדף: {exc}")
+    if status != 200:
+        return Step("display_restored", False, f"הדף החזיר {status}")
+    still_there = marker_id in html
+    return Step(
+        "display_restored", not still_there,
+        "המבקר רואה שוב את הדף המקורי" if not still_there else
+        "פסקת הסימון עדיין מוצגת למבקר למרות שהשדות שוחזרו — בדוק מטמון",
     )
 
 

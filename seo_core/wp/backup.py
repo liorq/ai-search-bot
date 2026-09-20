@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from ..schema import Result
-from .content import ELEMENTOR_CSS_KEY, ELEMENTOR_DATA_KEY, PostContent
+from .content import ELEMENTOR_DATA_KEY, PostContent
 
 BACKUP_VERSION = 1
 
@@ -69,7 +69,11 @@ def create(
     """
     keys = set(meta_keys or [])
     if content.builder == "elementor":
-        keys |= {ELEMENTOR_DATA_KEY, ELEMENTOR_CSS_KEY}
+        # `_elementor_data` only. `_elementor_css` is not exposed in REST, so
+        # it always read back as empty — a backup of a value we never held,
+        # and a comparison that could only ever be meaningless. Elementor
+        # regenerates it from the tree anyway; it is a cache, not content.
+        keys.add(ELEMENTOR_DATA_KEY)
 
     source = content.meta or {}
     snapshot = {key: source.get(key, "") for key in keys}

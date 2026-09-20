@@ -201,12 +201,16 @@ def test_elementor_widget_lands_in_the_same_column():
     assert widgets[2]["id"] == "w2"                   # existing content pushed down
 
 
-def test_elementor_edit_clears_the_css_cache():
-    """Without the bump, the page can render with the previous layout's styles."""
+def test_an_elementor_edit_asks_for_a_re_render_without_pretending_to_do_it():
+    """`_elementor_css` is not exposed in REST, so writing it changed nothing.
+
+    It looked like cache handling and was not. The tree is the only thing
+    written; the cache is cleared afterwards through Elementor's own endpoint.
+    """
     post = wp_content.load(elementor_post(ELEMENTOR_TREE)).data["content"]
     result = wp_content.insert_paragraph_after_heading(post, "Spring replacement cost", "New.")
-    assert result.data["payload"]["meta"][wp_content.ELEMENTOR_CSS_KEY] == ""
     assert result.data["needs_css_regeneration"] is True
+    assert list(result.data["payload"]["meta"]) == [wp_content.ELEMENTOR_DATA_KEY]
 
 
 def test_elementor_source_tree_is_not_mutated():
@@ -512,7 +516,7 @@ def test_an_elementor_section_writes_meta_and_never_post_content():
         page, "Spring replacement cost", "Warranty", "Ten years."
     ).data["payload"]
     assert "content" not in payload
-    assert wp_content.ELEMENTOR_CSS_KEY in payload["meta"]
+    assert wp_content.ELEMENTOR_DATA_KEY in payload["meta"]
 
 
 def test_a_section_needs_both_a_heading_and_a_body():
@@ -622,9 +626,9 @@ class TestLinkPhrase:
         editor = written[0]["elements"][0]["settings"]["editor"]
         assert editor == ('<p>We fix every <a href="https://x.com/s">'
                           "torsion spring</a>.</p>")
-        # The CSS cache has to be cleared or the old layout keeps rendering.
-        assert result.data["payload"]["meta"][wp_content.ELEMENTOR_CSS_KEY] == ""
-        assert result.data["inverse"]["meta"][wp_content.ELEMENTOR_CSS_KEY] == "cached"
+        # Only the tree is written; the cached markup is cleared after the write.
+        assert list(result.data["payload"]["meta"]) == [wp_content.ELEMENTOR_DATA_KEY]
+        assert result.data["needs_css_regeneration"] is True
 
     def test_an_elementor_page_already_linking_is_left_alone(self):
         page = wp_content.PostContent(
