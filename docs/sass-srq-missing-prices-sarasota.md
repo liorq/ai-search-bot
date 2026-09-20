@@ -2,7 +2,7 @@
 
 Source page: https://www.sass-srq.com/services/ ("Browse Every Treatment" list, checked 2026-09-20).
 
-The treatment list holds **62 services**; **32 already show a price** and **30 do not**.
+The treatment list holds **52 services**; **21 already show a price** and **31 do not**.
 For each unpriced service below: the Sarasota going rate (low–high seen on local menus)
 and a suggested price that sits where SASS SRQ already prices itself — mid-to-upper
 independent studio, above the budget wax chains, below the medspas.
@@ -11,7 +11,7 @@ All competitor figures were read off published Sarasota price menus (listed at t
 
 ---
 
-## Facials — 12 missing
+## Facials — 13 missing
 
 | Service | Sarasota range | Suggested price |
 |---|---|---|
@@ -68,13 +68,13 @@ what every Sarasota clinic charging over $150 does.
 
 ## Lashes
 
-Both lash services are already priced (Lash Lift $72, Eyelash Tinting $40) —
-and both sit **below** the Sarasota market (lash lift $110–156, lash tint $36–40).
-A lash lift at $89–95 would still read as fair value locally.
+Both lash services are already priced (Lash Lift $72, Eyelash Tinting $40). The tint
+sits inside the Sarasota range ($36–40); the lift sits **below** it — Sarasota charges
+$110–156 for a lash lift. $89–95 would still read as fair value locally.
 
 ---
 
-## Three existing prices worth revisiting
+## Four existing prices worth revisiting
 
 1. **Teen Facial $155 is more expensive than the Signature Facial $145.** In Sarasota a
    teen/youth facial runs $95. It should be the cheapest facial on the menu, not the
@@ -84,11 +84,13 @@ A lash lift at $89–95 would still read as fair value locally.
 3. **Chemical Peel $50.** That is add-on pricing. A stand-alone peel in Sarasota is
    $90–200. Either label the $50 clearly as an add-on to a facial, or price the
    stand-alone peel at $95–125.
+4. **Lash Lift $72.** Sarasota charges $110–156. Not a bug, but money left on the
+   table — $89–95 still reads as fair value locally.
 
 ## Note on the homepage FAQ
 
 The homepage FAQ answers "How much does a facial cost at SASS SRQ?" with "call me for a
-price." With 32 prices already published on the services page, that answer costs
+price." With 21 prices already published on the services page, that answer costs
 visibility — price questions are exactly what AI search engines and Google quote. Replace
 it with a real range ("facials run $75–275 depending on the treatment") and keep the
 consultation offer after it.
