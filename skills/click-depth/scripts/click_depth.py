@@ -43,7 +43,7 @@ from seo_core.change_guard import risk, rollback                         # noqa:
 from seo_core.log import banner, kv, log, rule                           # noqa: E402
 from seo_core.schema import ChangeRecord, save_findings                  # noqa: E402
 from seo_core.sources import crawl as crawler                            # noqa: E402
-from seo_core.sources import queries as gsc, structure                   # noqa: E402
+from seo_core.sources import gsc_wizard, queries as gsc, structure       # noqa: E402
 from seo_core.wp import backup as wp_backup                              # noqa: E402
 from seo_core.wp import content as wp_content                            # noqa: E402
 from seo_core.wp import rehearsal                                        # noqa: E402
@@ -114,22 +114,28 @@ def self_check(domain: str) -> int:
 #  שלב 1 — סריקה וניתוח
 # ═══════════════════════════════════════════════════════
 
-def analyze(domain: str, queries_path: Path | None, max_pages: int,
+def analyze(domain: str, queries_path: str | None, max_pages: int,
             do_trace: bool) -> int:
     client = clients.load(domain)
     dirs = client_dirs(domain)
 
     rows = []
-    if queries_path:
-        loaded = gsc.load_export(queries_path)
+    fetched = gsc_wizard.optional_rows_for(client, queries_path)
+    if fetched.data["path"]:
+        loaded = gsc.load_export(fetched.data["path"])
         if not loaded:
             log(loaded.detail, "ERR")
             return 1
         rows = loaded.data["rows"]
+        for label, value in fetched.data["lines"]:
+            kv(label, value)
         log(loaded.detail, "OK")
-    else:
-        log("בלי --queries: העובדות ידווחו, אבל דפים עמוקים ודפים חסומים "
-            "דורשים נתוני ביקוש ולא ייבדקו", "WARN")
+    # בלי נתוני ביקוש עדיין מדווחים עובדות — אבל אומרים מה לא נבדק, כדי
+    # שהיעדר ממצא לא ייקרא כאילו אין בעיה.
+    blocked = fetched.data["blocked"]
+    if blocked:
+        log(f"{blocked}: דפים עמוקים ודפים חסומים דורשים נתוני ביקוש "
+            "ולא נבדקו", "WARN")
 
     fetch = crawler.requests_fetcher()
     start = crawler.check_start(client.cms.base_url, fetch)
@@ -164,6 +170,8 @@ def analyze(domain: str, queries_path: Path | None, max_pages: int,
     kv("קישורים שלא מגיעים ליעד", report.wasted_links)
     if rows:
         kv("עקומת CTR", curve.describe())
+    else:
+        kv("נתוני חיפוש", f"חסום — {blocked}")
     rule()
 
     if report.broken:
@@ -459,9 +467,7 @@ def main(argv: list[str] | None = None) -> int:
             return self_check(args.client)
 
         if args.mode == "analyze":
-            return analyze(args.client,
-                           Path(args.queries) if args.queries else None,
-                           args.max_pages, args.trace)
+            return analyze(args.client, args.queries, args.max_pages, args.trace)
 
         if args.mode == "plan":
             if not (args.page and args.old and args.new):

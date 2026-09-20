@@ -34,9 +34,12 @@ description: >
 ## המפה נשמרת, ומתמזגת
 
 ```bash
-python scripts/topic_cluster.py --client example.com --queries queries.json
+python scripts/topic_cluster.py --client example.com
 python scripts/topic_cluster.py --client example.com --show
 ```
+
+השאילתות נמשכות לבד מ-GSC Wizard (נדרש `gsc_property` ב-`clients.json`
+ו-`GSC_WIZARD_API_KEY` ב-`.env`). `--queries <קובץ>` עדיין עובד לשחזור.
 
 הרצה חוזרת לאותו לקוח לא מייצרת מפה חדשה בלי זיכרון. היא אומרת:
 

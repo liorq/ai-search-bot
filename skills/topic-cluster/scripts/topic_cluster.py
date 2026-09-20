@@ -34,7 +34,7 @@ from seo_core import clients, paths, secrets                             # noqa:
 from seo_core.log import banner, count, kv, log, rule                    # noqa: E402
 from seo_core.schema import save_findings                                # noqa: E402
 from seo_core.sources import clusters as cl                              # noqa: E402
-from seo_core.sources import queries as gsc                              # noqa: E402
+from seo_core.sources import gsc_wizard, queries as gsc                  # noqa: E402
 
 MAX_CLUSTERS = 12
 MAX_QUERIES  = 5
@@ -89,10 +89,20 @@ def show(domain: str) -> int:
     return 0
 
 
-def run(domain: str, queries_path: Path) -> int:
+def run(domain: str, queries_path: str | None) -> int:
+    client = clients.load(domain)
     dirs = paths.data_dir(domain)
 
-    loaded = gsc.load_export(queries_path)
+    fetched = gsc_wizard.rows_for(client, queries_path)
+    if not fetched:
+        log(fetched.detail, "ERR")
+        return 1
+    if fetched.data["fetched"]:
+        log(fetched.detail, "OK")
+        for label, value in fetched.data["lines"]:
+            kv(label, value)
+
+    loaded = gsc.load_export(fetched.data["path"])
     if not loaded:
         log(loaded.detail, "ERR")
         return 1
@@ -169,10 +179,8 @@ def main(argv: list[str] | None = None) -> int:
             return self_check(args.client)
         if args.show:
             return show(args.client)
-        if not args.queries:
-            log("צריך --queries כדי לבנות מפה, או --show כדי לראות קיימת", "ERR")
-            return 1
-        return run(args.client, Path(args.queries))
+        # בלי --queries הנתונים נמשכים לבד מ-GSC Wizard.
+        return run(args.client, args.queries)
     except clients.ClientConfigError as exc:
         log(str(exc), "ERR")
         return 1

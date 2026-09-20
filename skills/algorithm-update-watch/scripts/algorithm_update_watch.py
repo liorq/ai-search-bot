@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # seo_core יושב ב-~/.claude/seo_core אחרי install.sh; בפיתוח — בשורש הריפו.
@@ -35,7 +35,7 @@ from seo_core import clients, paths, secrets                             # noqa:
 from seo_core.change_guard import ledger                                 # noqa: E402
 from seo_core.log import banner, count, kv, log, rule                    # noqa: E402
 from seo_core.schema import save_findings                                # noqa: E402
-from seo_core.sources import queries as gsc, updates as up               # noqa: E402
+from seo_core.sources import gsc_wizard, queries as gsc, updates as up   # noqa: E402
 
 MAX_LISTED = 10
 VERDICT_ICONS = {
@@ -50,22 +50,84 @@ def parse_window(value: str) -> tuple:
             datetime.strptime(end.strip(), "%Y-%m-%d").date())
 
 
-def run(domain: str, before_path: Path, after_path: Path, window: str,
-        updates_path: str | None) -> int:
-    clients.load(domain)          # מאמת שהלקוח מוגדר לפני שקוראים משהו
+#: כמה ימים צריך אחרי סוף ההשקה כדי שיהיה בכלל "אחרי" למדוד.
+SETTLE_DAYS = 14
+
+
+def fetch_updates(client, updates_path: str | None) -> Path | None:
+    """רשימת העדכונים — מגוגל, ולא מהרשימה המובנית שקפאה בזמן."""
+    if updates_path:
+        return Path(updates_path)
+    fetched = gsc_wizard.ensure_updates(client)
+    if fetched:
+        log(fetched.detail, "OK")
+        return fetched.data["path"]
+    log(f"{fetched.detail} — נופלים לרשימה המובנית, שעשויה להיות לא מעודכנת", "WARN")
+    return None
+
+
+def pick_update(client, updates, days: int):
+    """העדכון האחרון שכבר הספיק להתייצב, ושני החלונות סביבו.
+
+    לפני = הימים שעד ערב תחילת ההשקה; אחרי = הימים שמיום שאחרי סופה.
+    עדכון שההשקה שלו נגמרה לפני פחות מ-SETTLE_DAYS ימים עוד לא ניתן למדידה.
+    """
+    settled = gsc_wizard.settled_through(client)
+    if not settled:
+        return settled, None, None, None
+    last_day = datetime.strptime(settled.data["end"], "%Y-%m-%d").date()
+    ready = [u for u in updates if u.end + timedelta(days=SETTLE_DAYS) <= last_day]
+    if not ready:
+        return settled, None, None, None
+    update = max(ready, key=lambda u: u.end)
+    before = (update.start - timedelta(days=days), update.start - timedelta(days=1))
+    after = (update.end + timedelta(days=1), min(last_day, update.end + timedelta(days=days)))
+    return settled, update, before, after
+
+
+def run(domain: str, before_path: str | None, after_path: str | None, window: str | None,
+        updates_path: str | None, days: int = 14) -> int:
+    client = clients.load(domain)  # מאמת שהלקוח מוגדר לפני שקוראים משהו
     dirs = paths.data_dir(domain)
 
-    try:
-        start, end = parse_window(window)
-    except ValueError:
-        log("--window צריך להיות בפורמט 2025-03-01:2025-04-15", "ERR")
-        return 1
-    if end < start:
-        log("סוף החלון לפני ההתחלה שלו", "ERR")
-        return 1
+    updates_file = fetch_updates(client, updates_path)
+    updates = up.load_updates(updates_file)
 
-    before = gsc.load_export(before_path)
-    after = gsc.load_export(after_path)
+    if window:
+        try:
+            start, end = parse_window(window)
+        except ValueError:
+            log("--window צריך להיות בפורמט 2025-03-01:2025-04-15", "ERR")
+            return 1
+        if end < start:
+            log("סוף החלון לפני ההתחלה שלו", "ERR")
+            return 1
+    else:
+        settled, update, before_dates, after_dates = pick_update(client, updates, days)
+        if not settled:
+            log(settled.detail, "ERR")
+            return 1
+        if update is None:
+            banner(f"📉 מה קרה — {domain}")
+            log(f"אין עדכון מאושר שהסתיים לפני {SETTLE_DAYS} ימים לפחות — "
+                "אין מה לבדוק עדיין. זו לא תוצאה נקייה, פשוט אין 'אחרי'", "OK")
+            return 0
+        start, end = update.start, update.end
+        log(f"נבחר: {update.describe()}", "OK")
+        kv("חלון לפני", f"{before_dates[0]} .. {before_dates[1]}")
+        kv("חלון אחרי", f"{after_dates[0]} .. {after_dates[1]}")
+        for label, dates in (("לפני", before_dates), ("אחרי", after_dates)):
+            pulled = gsc_wizard.ensure_query_window(client, str(dates[0]), str(dates[1]))
+            if not pulled:
+                log(f"חלון {label}: {pulled.detail}", "ERR")
+                return 1
+            if label == "לפני":
+                before_path = pulled.data["path"]
+            else:
+                after_path = pulled.data["path"]
+
+    before = gsc.load_export(Path(before_path))
+    after = gsc.load_export(Path(after_path))
     if not before:
         log(before.detail, "ERR")
         return 1
@@ -73,7 +135,6 @@ def run(domain: str, before_path: Path, after_path: Path, window: str,
         log(after.detail, "ERR")
         return 1
 
-    updates = up.load_updates(Path(updates_path) if updates_path else None)
     covered = up.coverage(end, updates)
 
     changes = up.compare(before.data["rows"], after.data["rows"])
@@ -159,18 +220,26 @@ def run(domain: str, before_path: Path, after_path: Path, window: str,
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Algorithm Update Watch")
     parser.add_argument("--client", required=True, help="דומיין הלקוח מ-clients.json")
-    parser.add_argument("--before", required=True, help="ייצוא GSC לחלון שלפני")
-    parser.add_argument("--after", required=True, help="ייצוא GSC לחלון שאחרי")
-    parser.add_argument("--window", required=True,
+    parser.add_argument("--before", help="ייצוא GSC לחלון שלפני")
+    parser.add_argument("--after", help="ייצוא GSC לחלון שאחרי")
+    parser.add_argument("--window",
                         help="התאריכים שבין שני החלונות, 2025-03-01:2025-04-15")
     parser.add_argument("--updates", help="רשימת עדכונים עדכנית יותר מהמובנית")
+    parser.add_argument("--days", type=int, default=14,
+                        help="אורך כל חלון בימים (ברירת מחדל: 14)")
     args = parser.parse_args(argv)
 
     secrets.load_env()
 
+    manual = (args.before, args.after, args.window)
+    if any(manual) and not all(manual):
+        log("--before, --after ו---window באים יחד, או שאף אחד מהם לא ניתן "
+            "והחלונות נבחרים לפי העדכון האחרון", "ERR")
+        return 1
+
     try:
-        return run(args.client, Path(args.before), Path(args.after),
-                   args.window, args.updates)
+        return run(args.client, args.before, args.after,
+                   args.window, args.updates, args.days)
     except clients.ClientConfigError as exc:
         log(str(exc), "ERR")
         return 1

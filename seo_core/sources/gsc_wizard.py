@@ -374,8 +374,15 @@ def completeness(rows: list[dict[str, Any]], totals: dict[str, int], visible: di
 # ═══════════════════════════════════════════════════════
 
 def export_queries(property_url: str, out_dir: Path, days: int = 28,
-                   search_type: str = "web", transport: Transport | None = None) -> Result:
-    """Fetch the settled window and write it where `queries.load_export` reads."""
+                   search_type: str = "web", transport: Transport | None = None,
+                   window_dates: tuple[str, str] | None = None) -> Result:
+    """Fetch the settled window and write it where `queries.load_export` reads.
+
+    `window_dates` overrides the settled window for a caller that needs a
+    specific span — a before/after pair around a dated event, say — and the
+    freshness of the data is still reported, because a window that runs past
+    the settled day is short of counted days, not short of traffic.
+    """
     if not property_url:
         return Result.failure("gsc_wizard_no_property",
                               "ללקוח לא מוגדר gsc_property ב-clients.json — אין מה למשוך")
@@ -387,7 +394,7 @@ def export_queries(property_url: str, out_dir: Path, days: int = 28,
     window = settled_window(session, property_url, days)
     if not window:
         return window
-    start, end = window.data["start"], window.data["end"]
+    start, end = window_dates or (window.data["start"], window.data["end"])
 
     fetched = fetch_query_pages(session, property_url, start, end, search_type)
     if not fetched:
@@ -702,6 +709,25 @@ def ensure_updates(client: Client) -> Result:
     return export_updates(client.data_dir / "gsc")
 
 
+def ensure_query_window(client: Client, start: str, end: str) -> Result:
+    """One named span of rows — for a before/after pair around a dated event."""
+    return export_queries(client.gsc_property, client.data_dir / "gsc",
+                          window_dates=(start, end))
+
+
+def settled_through(client: Client, transport: Transport | None = None) -> Result:
+    """The last day Search Console has finished counting for this property.
+
+    Asked of the server, not computed from today: the lag is two or three days
+    and it is not constant, so a window chosen from the calendar can silently
+    include days that are still filling up.
+    """
+    opened = open_session(transport)
+    if not opened:
+        return opened
+    return settled_window(opened.data["session"], client.gsc_property, 1)
+
+
 def describe(result: Result) -> list[tuple[str, str]]:
     """What a skill should say about a pull before it shows a single finding.
 
@@ -725,3 +751,52 @@ def describe(result: Result) -> list[tuple[str, str]]:
                       "לא ידוע אם המשיכה מלאה" if cover["truncated"] == "unknown"
                       else "המשיכה נחתכה — הניתוח חלקי"))
     return pairs
+
+
+def rows_for(client: Client, given: str | None = None, days: int = 28) -> Result:
+    """The rows a skill is about to analyse — handed to it, or fetched.
+
+    Every skill asked its user for an export file that nothing produced. They
+    all resolve it the same way now, and through one function, so the wording
+    of what was fetched cannot drift between them.
+
+    A file the caller named is trusted as-is: replaying a saved export is how a
+    past run is reproduced, and re-fetching would quietly change the data under
+    a comparison.
+    """
+    if given:
+        return Result.success("given", f"קובץ שאילתות שסופק: {given}",
+                              path=Path(given), lines=[], fetched=False)
+    fetched = ensure_queries(client, days)
+    if not fetched:
+        return fetched
+    return Result.success("fetched", fetched.detail, path=fetched.data["path"],
+                          lines=describe(fetched), fetched=True,
+                          completeness=fetched.data["completeness"])
+
+
+def optional_rows_for(client: Client, given: str | None = None, days: int = 28) -> Result:
+    """The same, for a skill that has something to say without Search Console.
+
+    Always succeeds, because these skills crawl the site and report on it
+    regardless. What it will not do is let a missing source pass for a clean
+    result: when the rows are unavailable, `path` is None and `blocked` holds
+    the Hebrew sentence the report has to carry, so "no pages with demand"
+    can never be read as "no problem found".
+    """
+    if given:
+        return Result.success("given", f"קובץ שאילתות שסופק: {given}",
+                              path=Path(given), lines=[], blocked=None)
+    if not client.gsc_property:
+        return Result.success(
+            "no_property", "ללקוח אין נכס Search Console", path=None, lines=[],
+            blocked="ללקוח לא מוגדר gsc_property — החלקים שתלויים בנתוני חיפוש לא נבדקו")
+    fetched = ensure_queries(client, days)
+    if not fetched:
+        return Result.success(
+            "fetch_failed", fetched.detail, path=None, lines=[],
+            blocked=f"נתוני Search Console לא נמשכו ({fetched.detail}) — "
+                    "החלקים שתלויים בהם חסומים, לא נקיים")
+    return Result.success("fetched", fetched.detail, path=fetched.data["path"],
+                          lines=describe(fetched), blocked=None,
+                          completeness=fetched.data["completeness"])

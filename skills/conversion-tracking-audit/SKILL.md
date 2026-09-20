@@ -64,19 +64,25 @@ description: >
 
 ```bash
 python scripts/conversion_tracking_audit.py --client example.com \
-    --queries queries.json --sessions ga4_sessions.json
+    --sessions ga4_sessions.json
 ```
 
 `ga4_sessions.json` הוא ייצוא פשוט: `{"https://example.com/springs": 820, ...}`
 או `{"rows": [{"url": "...", "sessions": 820}]}`.
 
+**סשנים והמרות: לא זמין כרגע** — GA4 לא מחובר ב-GSC Wizard, ואין מקור אוטומטי
+לסשנים לדף נחיתה. הדוח אומר "לא זמין" ולא מציג אפס, ושום מספר המרות לא נגזר
+משאילתות Search Console. שלוש שכבות נפרדות: שאילתות, דפי נחיתה, המרות —
+והחיבור ביניהן הוא ברמת דף הנחיתה בלבד.
+
 ## תהליך העבודה
 
 ```bash
 python scripts/conversion_tracking_audit.py --self-check --client example.com
-python scripts/conversion_tracking_audit.py --client example.com \
-    --queries queries.json --sessions ga4_sessions.json --max-pages 60
+python scripts/conversion_tracking_audit.py --client example.com --max-pages 60
 ```
+
+השאילתות נמשכות לבד מ-GSC Wizard כשללקוח יש `gsc_property`.
 
 ```
 ═══════════════════════════════════════════════════════

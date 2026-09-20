@@ -46,7 +46,7 @@ from seo_core.change_guard import checks, ledger, plan as plan_mod      # noqa: 
 from seo_core.change_guard import risk, rollback                        # noqa: E402
 from seo_core.log import banner, kv, log, rule                          # noqa: E402
 from seo_core.schema import ChangeRecord, save_findings                 # noqa: E402
-from seo_core.sources import gsc_source                                 # noqa: E402
+from seo_core.sources import gsc_source, gsc_wizard                     # noqa: E402
 from seo_core.wp import backup as wp_backup                             # noqa: E402
 from seo_core.wp import content as wp_content                           # noqa: E402
 from seo_core.wp import seo_meta
@@ -140,15 +140,38 @@ def self_check(domain: str) -> int:
 #  שלב 1 — ניתוח
 # ═══════════════════════════════════════════════════════
 
-def analyze(domain: str, data_path: Path) -> int:
+def analyze(domain: str, data_path: str | None, compare: str = "year") -> int:
     client = clients.load(domain)
     dirs = client_dirs(domain)
 
-    loaded = gsc_source.load_export(data_path)
+    if data_path is None:
+        fetched = gsc_wizard.ensure_windows(client, compare=compare)
+        if not fetched:
+            log(fetched.detail, "ERR")
+            if fetched.code == "gsc_wizard_no_history" and compare == "year":
+                log("להשוואה מול התקופה הקודמת (28 הימים שלפני): "
+                    f"--mode analyze --client {domain} --compare previous", "WARN")
+            return 1
+        log(fetched.detail, "OK")
+        data_path = fetched.data["path"]
+        kv("חלון", f"{fetched.data['window']['start']}..{fetched.data['window']['end']}")
+        kv("חלון השוואה", f"{fetched.data['comparison_window']['start']}.."
+                          f"{fetched.data['comparison_window']['end']}")
+
+    loaded = gsc_source.load_export(Path(data_path))
     if not loaded:
         log(loaded.detail, "ERR")
         return 1
     log(loaded.detail, "OK")
+
+    # השוואה מול התקופה הקודמת מערבבת ירידה אמיתית עם עונתיות: אותו חודש
+    # אשתקד הוא מה שמנטרל אותה, ובלעדיו כל ממצא כאן הוא "ירד", לא "דועך".
+    seasonal_caveat = (
+        "ההשוואה היא מול התקופה הקודמת ולא מול אותה תקופה אשתקד — "
+        "היא לא מבדילה בין דעיכה אמיתית לבין עונתיות"
+    ) if compare == "previous" else None
+    if seasonal_caveat:
+        log(seasonal_caveat, "WARN")
 
     current = loaded.data["current"]
     prior = loaded.data["prior"]
@@ -168,22 +191,27 @@ def analyze(domain: str, data_path: Path) -> int:
         log("לא נמצאו דפים דועכים מעל הסף", "OK")
         return 0
 
+    # GA4 לא מחובר, ולכן אין שיעור המרה. לא ממציאים מספר.
     conversion_rate = None
-    if client.has_conversion_data and client.conversion_value:
-        conversion_rate = None      # ימולא מ-GA4 כשהמודול ייבנה
 
     findings = [gsc_source.to_finding(v, domain, conversion_rate) for v in verdicts]
+    if seasonal_caveat:
+        for finding in findings:
+            finding.confidence_reason += f". {seasonal_caveat}"
     findings.sort(key=lambda f: f.priority(), reverse=True)
     path = save_findings(findings, dirs["reports"] / "decay_findings.json")
 
-    print_report(domain, verdicts, site_trend, path)
+    print_report(domain, verdicts, site_trend, path, seasonal_caveat)
     return 0
 
 
-def print_report(domain, verdicts, site_trend, path) -> None:
+def print_report(domain, verdicts, site_trend, path, seasonal_caveat=None) -> None:
     actionable = [v for v in verdicts if v.is_actionable]
 
     banner(f"📊 דעיכת תוכן — {domain}")
+    if seasonal_caveat:
+        kv("אזהרה", seasonal_caveat)
+    kv("המרות", "לא זמין — GA4 לא מחובר")
     kv("דפים דועכים", len(verdicts))
     kv("ניתנים לטיפול בשכתוב", len(actionable))
     kv("מגמת האתר", f"{site_trend:+.0%}")
@@ -472,6 +500,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--self-check", action="store_true",
                         help="בודק הגדרות וגישה לפני שנוגעים במשהו")
     parser.add_argument("--gsc-data", help="נתיב לקובץ נתוני GSC (למצב analyze)")
+    parser.add_argument("--compare", choices=["year", "previous"], default="year",
+                        help="מול מה משווים: אותה תקופה אשתקד (ברירת מחדל) "
+                             "או התקופה הקודמת — שלא מנטרלת עונתיות")
     parser.add_argument("--url", help="כתובת הדף (למצב plan)")
     parser.add_argument("--heading", help="הכותרת שאחריה תיכנס הפסקה (למצב plan)")
     parser.add_argument("--text", help="קובץ עם הפסקה להוספה (למצב plan)")
@@ -487,10 +518,8 @@ def main(argv: list[str] | None = None) -> int:
             return self_check(args.client)
 
         if args.mode == "analyze":
-            if not args.gsc_data:
-                log("--mode analyze דורש --gsc-data", "ERR")
-                return 1
-            return analyze(args.client, Path(args.gsc_data))
+            # בלי --gsc-data שני החלונות נמשכים לבד מ-GSC Wizard.
+            return analyze(args.client, args.gsc_data, args.compare)
 
         if args.mode == "plan":
             if not (args.url and args.heading and args.text):

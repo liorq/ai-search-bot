@@ -67,12 +67,12 @@ Arial — הגופן שגוגל מרנדר בו — מול הרוחב שנצפה
 
 ### שלב 1: הנתונים והניתוח
 
-**החלק שלך:** שלוף מ-GSC Wizard שאילתות עם הדף שדורג, קליקים, הופעות ומיקום —
-אותו פורמט של `onpage-optimizer`.
+**הסקריפט מושך את השאילתות לבד** מ-GSC Wizard. נדרשים `gsc_property`
+ב-`clients.json` ו-`GSC_WIZARD_API_KEY` ב-`~/.claude/seo/.env`.
+`--queries <קובץ>` עדיין עובד, לשחזור הרצה על ייצוא שמור.
 
 ```bash
-python scripts/ctr_titles.py --mode analyze --client example.com \
-    --queries queries.json [--serp serp.json]
+python scripts/ctr_titles.py --mode analyze --client example.com [--serp serp.json]
 ```
 
 הטייטלים נקראים מהדפים החיים עצמם, בקריאה מנומסת עם השהיה — אין צורך לספק

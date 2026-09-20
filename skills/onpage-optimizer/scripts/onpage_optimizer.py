@@ -133,36 +133,20 @@ def load_crawl(path: str | None) -> dict[str, str]:
     return {url: str(text) for url, text in (raw.get("pages") or raw).items()}
 
 
-def fetch_queries(client: clients.Client, dirs: dict[str, Path]) -> Path | None:
-    """מושך את החלון הסגור האחרון מ-GSC Wizard. בלי זה הסקיל דרש קובץ ידני."""
-    fetched = gsc_wizard.export_queries(client.gsc_property, dirs["base"] / "gsc")
-    if not fetched:
-        log(fetched.detail, "ERR")
-        return None
-    log(fetched.detail, "OK")
-    fresh, cover = fetched.data["freshness"], fetched.data["completeness"]
-    kv("נתונים סגורים עד", fresh["settled_through"])
-    kv("הופעות בשאילתות גלויות",
-       f"{cover['impressions_in_queries']:,} מתוך {cover['impressions_total']:,}")
-    kv("קליקים בשאילתות גלויות",
-       f"{cover['clicks_in_queries']:,} מתוך {cover['clicks_total']:,} — השאר בשאילתות "
-       "ש-Search Console מסתיר")
-    if cover["truncated"] is not False:
-        log("לא ידוע אם המשיכה מלאה" if cover["truncated"] == "unknown"
-            else "המשיכה נחתכה — הניתוח חלקי", "WARN")
-    return fetched.data["path"]
-
-
-def analyze(domain: str, queries_path: Path | None, crawl_path: str | None) -> int:
+def analyze(domain: str, queries_path: str | None, crawl_path: str | None) -> int:
     client = clients.load(domain)  # מאמת שהלקוח מוגדר לפני שקוראים משהו
     dirs = client_dirs(domain)
 
-    if queries_path is None:
-        queries_path = fetch_queries(client, dirs)
-        if queries_path is None:
-            return 1
+    rows = gsc_wizard.rows_for(client, queries_path)
+    if not rows:
+        log(rows.detail, "ERR")
+        return 1
+    if rows.data["fetched"]:
+        log(rows.detail, "OK")
+        for label, value in rows.data["lines"]:
+            kv(label, value)
 
-    loaded = queries.load_export(queries_path)
+    loaded = queries.load_export(rows.data["path"])
     if not loaded:
         log(loaded.detail, "ERR")
         return 1
@@ -507,8 +491,7 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.mode == "analyze":
             # בלי --queries הנתונים נמשכים לבד מ-GSC Wizard.
-            return analyze(args.client, Path(args.queries) if args.queries else None,
-                           args.crawl)
+            return analyze(args.client, args.queries, args.crawl)
 
         if args.mode == "plan":
             if not (args.url and args.after and args.heading and args.text):

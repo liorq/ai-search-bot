@@ -43,7 +43,7 @@ from seo_core.change_guard import risk, rollback                         # noqa:
 from seo_core.log import banner, kv, log, rule                           # noqa: E402
 from seo_core.schema import ChangeRecord, save_findings                  # noqa: E402
 from seo_core.sources import crawl as crawler                            # noqa: E402
-from seo_core.sources import linkgraph, queries as gsc                   # noqa: E402
+from seo_core.sources import gsc_wizard, linkgraph, queries as gsc       # noqa: E402
 from seo_core.wp import backup as wp_backup                              # noqa: E402
 from seo_core.wp import content as wp_content                            # noqa: E402
 from seo_core.wp import rehearsal, seo_meta, seo_refresh                 # noqa: E402
@@ -128,12 +128,21 @@ def load_known(path: str | None) -> list[str]:
     return [r if isinstance(r, str) else str(r.get("url", "")) for r in raw]
 
 
-def analyze(domain: str, queries_path: Path, known_path: str | None,
+def analyze(domain: str, queries_path: str | None, known_path: str | None,
             max_pages: int) -> int:
     client = clients.load(domain)
     dirs = client_dirs(domain)
 
-    loaded = gsc.load_export(queries_path)
+    fetched = gsc_wizard.rows_for(client, queries_path)
+    if not fetched:
+        log(fetched.detail, "ERR")
+        return 1
+    if fetched.data["fetched"]:
+        log(fetched.detail, "OK")
+        for label, value in fetched.data["lines"]:
+            kv(label, value)
+
+    loaded = gsc.load_export(fetched.data["path"])
     if not loaded:
         log(loaded.detail, "ERR")
         return 1
@@ -480,11 +489,8 @@ def main(argv: list[str] | None = None) -> int:
             return self_check(args.client)
 
         if args.mode == "analyze":
-            if not args.queries:
-                log("--mode analyze דורש --queries", "ERR")
-                return 1
-            return analyze(args.client, Path(args.queries), args.known,
-                           args.max_pages)
+            # בלי --queries הנתונים נמשכים לבד מ-GSC Wizard.
+            return analyze(args.client, args.queries, args.known, args.max_pages)
 
         if args.mode == "plan":
             if not (args.source and args.target and args.phrase):

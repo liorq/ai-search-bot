@@ -45,7 +45,7 @@ from seo_core.change_guard import checks, ledger, plan as plan_mod       # noqa:
 from seo_core.change_guard import risk, rollback                         # noqa: E402
 from seo_core.log import banner, kv, log, rule                           # noqa: E402
 from seo_core.schema import ChangeRecord, save_findings                  # noqa: E402
-from seo_core.sources import queries as gsc                              # noqa: E402
+from seo_core.sources import gsc_wizard, queries as gsc                  # noqa: E402
 from seo_core.text import pixels, snippets                               # noqa: E402
 from seo_core.wp import backup as wp_backup                              # noqa: E402
 from seo_core.wp import content as wp_content                            # noqa: E402
@@ -171,12 +171,21 @@ def candidate_urls(rows: list[gsc.QueryRow]) -> list[str]:
     return [url for _, url in sorted(shortlist, reverse=True)]
 
 
-def analyze(domain: str, queries_path: Path, snippets_path: str | None,
+def analyze(domain: str, queries_path: str | None, snippets_path: str | None,
             serp_path: str | None) -> int:
-    clients.load(domain)          # מאמת שהלקוח מוגדר לפני שקוראים משהו
+    client = clients.load(domain)  # מאמת שהלקוח מוגדר לפני שקוראים משהו
     dirs = client_dirs(domain)
 
-    loaded = gsc.load_export(queries_path)
+    fetched = gsc_wizard.rows_for(client, queries_path)
+    if not fetched:
+        log(fetched.detail, "ERR")
+        return 1
+    if fetched.data["fetched"]:
+        log(fetched.detail, "OK")
+        for label, value in fetched.data["lines"]:
+            kv(label, value)
+
+    loaded = gsc.load_export(fetched.data["path"])
     if not loaded:
         log(loaded.detail, "ERR")
         return 1
@@ -255,7 +264,11 @@ def build_plan(domain, url, queries_path, new_title, new_description, dry_run) -
     client = clients.load(domain)
     dirs = client_dirs(domain)
 
-    loaded = gsc.load_export(queries_path)
+    fetched = gsc_wizard.rows_for(client, queries_path)
+    if not fetched:
+        log(fetched.detail, "ERR")
+        return 1
+    loaded = gsc.load_export(fetched.data["path"])
     if not loaded:
         log(loaded.detail, "ERR")
         return 1
@@ -623,16 +636,14 @@ def main(argv: list[str] | None = None) -> int:
             return self_check(args.client)
 
         if args.mode == "analyze":
-            if not args.queries:
-                log("--mode analyze דורש --queries", "ERR")
-                return 1
-            return analyze(args.client, Path(args.queries), args.snippets, args.serp)
+            # בלי --queries הנתונים נמשכים לבד מ-GSC Wizard.
+            return analyze(args.client, args.queries, args.snippets, args.serp)
 
         if args.mode == "plan":
-            if not (args.url and args.title and args.queries):
-                log("--mode plan דורש --url, --title ו---queries", "ERR")
+            if not (args.url and args.title):
+                log("--mode plan דורש --url ו---title", "ERR")
                 return 1
-            return build_plan(args.client, args.url, Path(args.queries),
+            return build_plan(args.client, args.url, args.queries,
                               args.title, args.description, args.dry_run)
 
         if args.mode == "publish":

@@ -31,17 +31,22 @@ for candidate in (
 
 from seo_core import clients, paths, report, secrets                     # noqa: E402
 from seo_core.log import banner, count, hours, kv, log, rule                           # noqa: E402
-from seo_core.sources import queries as gsc                              # noqa: E402
+from seo_core.sources import gsc_wizard, queries as gsc                  # noqa: E402
 
 MAX_LISTED = 8
 SEVERITY_ICONS = {"blocker": "🛑", "high": "🔴", "medium": "🟡", "low": "⚪"}
 
 
-def ceiling_from_queries(path: str | None) -> float | None:
-    """עקומת CTR שנמדדה מהאתר, אם סופקה — עדיפה על ממוצע תעשייה."""
-    if not path:
+def ceiling_from_queries(client: clients.Client, path: str | None) -> float | None:
+    """עקומת CTR שנמדדה מהאתר — עדיפה על ממוצע תעשייה.
+
+    הנתונים נמשכים לבד; אם אי אפשר, נשארים בממוצע התעשייה ואומרים זאת.
+    """
+    fetched = gsc_wizard.optional_rows_for(client, path)
+    if not fetched.data["path"]:
+        log(f"{fetched.data['blocked']} — תקרת ה-CTR תילקח מממוצע התעשייה", "WARN")
         return None
-    loaded = gsc.load_export(Path(path))
+    loaded = gsc.load_export(fetched.data["path"])
     if not loaded:
         log(loaded.detail, "WARN")
         return None
@@ -55,11 +60,11 @@ def ceiling_from_queries(path: str | None) -> float | None:
 
 def run(domain: str, out: str | None, ceiling: float | None,
         queries_path: str | None) -> int:
-    clients.load(domain)          # מאמת שהלקוח מוגדר לפני שקוראים משהו
+    client = clients.load(domain)  # מאמת שהלקוח מוגדר לפני שקוראים משהו
     base = paths.data_dir(domain)
     reports_dir = base / "reports"
 
-    measured = ceiling_from_queries(queries_path)
+    measured = ceiling_from_queries(client, queries_path)
     ceiling_ctr = ceiling or measured or report.CEILING_CTR
 
     portfolio = report.build(domain, reports_dir, ceiling_ctr)

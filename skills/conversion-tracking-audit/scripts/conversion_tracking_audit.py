@@ -38,7 +38,7 @@ from seo_core import clients, paths, secrets                             # noqa:
 from seo_core.log import banner, count, kv, log, rule                    # noqa: E402
 from seo_core.schema import save_findings                                # noqa: E402
 from seo_core.sources import crawl as crawler                            # noqa: E402
-from seo_core.sources import queries as gsc, tracking                    # noqa: E402
+from seo_core.sources import gsc_wizard, queries as gsc, tracking        # noqa: E402
 
 DEFAULT_PAGES = 60            # מדגם, לא סריקה מלאה — התגים חוזרים על עצמם
 MAX_LISTED    = 6
@@ -110,17 +110,25 @@ def run(domain: str, queries_path: str | None, sessions_path: str | None,
             time.sleep(FETCH_DELAY)
 
     rows = []
-    if queries_path:
-        loaded = gsc.load_export(Path(queries_path))
+    fetched = gsc_wizard.optional_rows_for(client, queries_path)
+    if fetched.data["path"]:
+        loaded = gsc.load_export(fetched.data["path"])
         if loaded:
             rows = loaded.data["rows"]
+            for label, value in fetched.data["lines"]:
+                kv(label, value)
         else:
             log(loaded.detail, "WARN")
+    elif fetched.data["blocked"]:
+        log(fetched.data["blocked"], "WARN")
 
+    # שלוש שכבות נפרדות: שאילתות מ-Search Console, סשנים לדף נחיתה, והמרות.
+    # החיבור ביניהן הוא ברמת דף הנחיתה בלבד — קליק על שאילתה אינו המרה.
     sessions = load_sessions(sessions_path)
-    if rows and not sessions:
-        log("יש שאילתות אבל אין קובץ סשנים — ההשוואה בין קליקים לסשנים "
-            "היא הבדיקה החזקה כאן, והיא מדלגת", "WARN")
+    if not sessions:
+        log("סשנים והמרות: לא זמין — GA4 לא מחובר. אין מקור לסשנים לדף נחיתה, "
+            "ולכן ההשוואה בין קליקים לסשנים חסומה. שום מספר המרות לא נגזר "
+            "משאילתות Search Console", "WARN")
 
     audit = tracking.analyse(crawled, html_by_url, rows, sessions)
 
@@ -129,6 +137,8 @@ def run(domain: str, queries_path: str | None, sessions_path: str | None,
     kv("מזהי GA4", ", ".join(audit.measurement_ids) or "לא נמצאו")
     kv("מכולות GTM", ", ".join(audit.containers) or "אין")
     kv("המרות ב-clients.json", ", ".join(client.conversions) or "לא הוגדרו")
+    kv("סשנים והמרות בפועל", "לא זמין — GA4 לא מחובר" if not sessions
+       else f"{len(sessions):,} דפי נחיתה")
     rule()
 
     verifiable = [i for i in audit.issues if i.verifiable]

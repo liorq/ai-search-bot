@@ -76,8 +76,11 @@ description: >
 ```bash
 python scripts/internal_anchors.py --self-check --client example.com
 python scripts/internal_anchors.py --mode analyze --client example.com \
-    --queries queries.json --known sitemap_urls.json --max-pages 400
+    --known sitemap_urls.json --max-pages 400
 ```
+
+השאילתות נמשכות לבד מ-GSC Wizard (נדרש `gsc_property` ב-`clients.json`
+ו-`GSC_WIZARD_API_KEY` ב-`.env`). `--queries <קובץ>` עדיין עובד לשחזור.
 
 `--self-check` קורא את `robots.txt` **לפני** הסריקה ומכבד `Crawl-delay` אם
 הוא מוגדר. יש תקרת דפים, יש השהיה בין בקשות, והסריקה רצה על אתר של לקוח
