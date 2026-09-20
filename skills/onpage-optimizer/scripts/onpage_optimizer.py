@@ -38,7 +38,8 @@ for candidate in (
         break
 
 from seo_core import clients, paths, secrets                            # noqa: E402
-from seo_core.change_guard import checks, ledger, plan as plan_mod       # noqa: E402
+from seo_core.change_guard import checks, ledger, measure                # noqa: E402
+from seo_core.change_guard import plan as plan_mod                       # noqa: E402
 from seo_core.change_guard import risk, rollback                         # noqa: E402
 from seo_core.log import banner, kv, log, rule                           # noqa: E402
 from seo_core.schema import ChangeRecord, save_findings                  # noqa: E402
@@ -386,6 +387,11 @@ def publish(domain: str, plan_id: str) -> int:
         backup_ref=str(backup_path), backup_verified=True, status="applied",
         applied_at=datetime.now(timezone.utc),
         checkpoints=ledger.schedule_checkpoints(datetime.now(timezone.utc)),
+        # Why it was done and what the page was doing beforehand. Without
+        # these two the measurement in 28 days has nothing to compare against
+        # and no way to say what question it is answering.
+        reason=_reason_for(change_plan),
+        baseline=_baseline_for(domain, dirs, change_plan.url, _reason_for(change_plan)),
     )
 
     def fetch(target: str):
@@ -438,7 +444,54 @@ def publish(domain: str, plan_id: str) -> int:
 #  שלב 4 — מדידה חוזרת
 # ═══════════════════════════════════════════════════════
 
+def _reason_for(change_plan) -> dict:
+    """The finding that justified the write, kept with the change."""
+    finding = (change_plan.findings or [{}])[0]
+    return {"type": finding.get("type"), "query": finding.get("query"),
+            "instruction": (finding.get("action") or {}).get("instruction",
+                                                             change_plan.summary),
+            "impact_basis": finding.get("impact_basis", change_plan.rationale)}
+
+
+def _baseline_for(domain: str, dirs: dict, url: str, reason: dict) -> dict:
+    """The page's numbers as they stood, from the most recent export on disk.
+
+    Read from the saved export rather than fetched again: the point is to keep
+    the figures the decision was made on, not today's.
+    """
+    exports = sorted((dirs["base"] / "gsc").glob("queries_*.json"))
+    if not exports:
+        return {}
+    loaded = queries.load_export(exports[-1])
+    if not loaded:
+        return {}
+    rows = loaded.data["rows"]
+    window = current_window(rows, url, reason.get("query"))
+    if not window:
+        return {}
+    start, _, end = str(loaded.data["window"]).partition("..")
+    return {**window, "site_clicks": sum(r.clicks for r in rows),
+            "window": {"start": start, "end": end or start},
+            "completeness": loaded.data.get("completeness")}
+
+
+def current_window(rows, url: str, query: str | None) -> dict:
+    """What the page, and the query that was worked on, are doing now."""
+    for_page = [r for r in rows if r.url == url]
+    if query:
+        for_query = [r for r in for_page if r.query == query]
+        if for_query:
+            for_page = for_query
+    if not for_page:
+        return {}
+    impressions = sum(r.impressions for r in for_page)
+    weighted = sum(r.position * r.impressions for r in for_page)
+    return {"clicks": sum(r.clicks for r in for_page), "impressions": impressions,
+            "position": round(weighted / impressions, 2) if impressions else None}
+
+
 def verify(domain: str) -> int:
+    client = clients.load(domain)
     dirs = client_dirs(domain)
     due = ledger.due_checkpoints(dirs["base"])
 
@@ -447,16 +500,51 @@ def verify(domain: str) -> int:
         log("אין מדידות שהגיע זמנן", "OK")
         return 0
 
+    fetched = gsc_wizard.rows_for(client)
+    if not fetched:
+        log(f"{fetched.detail} — אי אפשר למדוד בלי נתונים עדכניים", "ERR")
+        return 1
+    loaded = queries.load_export(fetched.data["path"])
+    if not loaded:
+        log(loaded.detail, "ERR")
+        return 1
+    rows = loaded.data["rows"]
+
+    # The control: the whole property over the same two windows. Without it no
+    # rise can be told apart from a week when everything rose.
+    site_now = sum(r.clicks for r in rows)
+
     for item in due:
         change, checkpoint = item["change"], item["checkpoint"]
-        print(f"\n  {change['url']}")
-        kv("שינוי", change["change_id"])
-        kv("יום", checkpoint["day"])
+        baseline = change.get("baseline") or {}
+        current = current_window(rows, change["url"], (change.get("reason") or {}).get("query"))
+        control = ({"clicks_before": baseline.get("site_clicks"), "clicks_after": site_now}
+                   if baseline.get("site_clicks") else None)
+
+        rule()
+        if not baseline or not current:
+            log(f"{change['change_id']}: אין בסיס השוואה שמור לשינוי הזה — "
+                "נרשם כלא ניתן למדידה", "WARN")
+            ledger.complete_checkpoint(change["change_id"], checkpoint["day"],
+                                       "inconclusive", {"note": "no baseline"}, dirs["base"])
+            continue
+
+        assessment = measure.assess(baseline, current, control,
+                                    loaded.data.get("completeness"))
+        for line in measure.report_lines(change, assessment):
+            print(f"  {line}")
+        ledger.complete_checkpoint(
+            change["change_id"], checkpoint["day"], assessment.verdict,
+            {"current": current, "attributable": assessment.attributable,
+             "reason": assessment.reason}, dirs["base"])
+        if not assessment.conclusive:
+            following = ledger.next_checkpoint(
+                ledger.get(change["change_id"], dirs["base"]).data["change"])
+            if following:
+                log(f"נשאר פתוח — נמדוד שוב ביום {following['day']}", "INFO")
 
     rule()
-    log(f"{len(due)} מדידות ממתינות", "INFO")
-    log("שלוף שאילתות עדכניות והשווה מיקום לשאילתה שטופלה — "
-        "ירידה בדירוג לא מפעילה שחזור אוטומטי", "INFO")
+    log(f"{len(due)} מדידות טופלו. ירידה בדירוג לא מפעילה שחזור אוטומטי", "INFO")
     print()
     return 0
 

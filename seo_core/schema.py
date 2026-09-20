@@ -310,6 +310,17 @@ class ChangeRecord:
     checkpoints: list[dict[str, Any]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
+    #: Why this was done, carried over from the finding: its type, the query
+    #: and page it was about, and the sentence that justified the estimate.
+    #: A change without it is a diff; with it, it is a decision someone can
+    #: agree or disagree with months later.
+    reason: dict[str, Any] = field(default_factory=dict)
+
+    #: What the page and its target query were doing before the write, with
+    #: the exact window those numbers came from. Without the window a later
+    #: comparison is against an unknown period, which is not a comparison.
+    baseline: dict[str, Any] = field(default_factory=dict)
+
     @property
     def safe_to_auto_rollback(self) -> bool:
         """An automatic rollback needs a verified backup and no one else's edits.

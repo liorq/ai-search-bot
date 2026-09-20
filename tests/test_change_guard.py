@@ -383,20 +383,22 @@ def test_recording_is_idempotent(tmp_path):
     assert len(ledger.load(tmp_path)) == 1
 
 
-def test_checkpoints_land_at_14_28_and_56_days():
-    assert [c["day"] for c in ledger.schedule_checkpoints(NOW)] == [14, 28, 56]
+def test_checkpoints_land_at_28_56_and_84_days():
+    # 28 is the first read, not the verdict; 56 and 84 are there for the pages
+    # whose traffic cannot answer the question in four weeks.
+    assert [c["day"] for c in ledger.schedule_checkpoints(NOW)] == [28, 56, 84]
 
 
 def test_checkpoints_are_not_due_before_their_time(tmp_path):
     ledger.record(make_change(), tmp_path)
-    assert ledger.due_checkpoints(tmp_path, NOW + timedelta(days=13)) == []
+    assert ledger.due_checkpoints(tmp_path, NOW + timedelta(days=27)) == []
 
 
 def test_checkpoint_comes_due(tmp_path):
     ledger.record(make_change(), tmp_path)
-    due = ledger.due_checkpoints(tmp_path, NOW + timedelta(days=15))
+    due = ledger.due_checkpoints(tmp_path, NOW + timedelta(days=29))
     assert len(due) == 1
-    assert due[0]["checkpoint"]["day"] == 14
+    assert due[0]["checkpoint"]["day"] == 28
 
 
 def test_rolled_back_changes_are_not_measured(tmp_path):
