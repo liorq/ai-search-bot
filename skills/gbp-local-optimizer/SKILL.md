@@ -67,6 +67,27 @@ Localo כבר מנסח תגובות. מה שהסקיל הזה מוסיף:
 | 6 | **השוואה למתחרים** | `getPlaceGuidelines` — כל המתחרים המדורגים עם קטגוריה, דירוג, ביקורות ותמונות | **חציון במקום רשימה.** "43 ביקורות מול חציון 69" הוא יעד; רשימה של 431 מתחרים אינה |
 | 7 | **תעדוף** | `listPlaceTasks` — משימות שנוצרות אוטומטית | **לסנן לפי בעיה אמיתית.** משימה שנוצרה כדי למלא מכסה שבועית אינה פעולה. הכלל: פעולה נכנסת רק אם יש מאחוריה מספר |
 
+## שדה יחיד אינו הרשימה — הכלל שנקנה פעמיים
+
+**נמדד ב-20.9.2026.** שלפתי `latestPlaceSnapshot { category }`, קראתי בו
+״הקטגוריה״, וכתבתי המלצה שלמה להוסיף `Eyebrow bar`. **היא כבר הייתה שם.**
+לכרטיס שמונה קטגוריות, והשדה `additionalCategories` — ממש ליד זה ששלפתי —
+החזיק את שבע האחרות.
+
+**לפני שכותבים ״חסר X בכרטיס״, בדוק את הסכמה ולא רק את השדה שבא ליד.**
+`__type(name: "PlaceSnapshot") { fields { name } }` מחזיר את כל השדות בשנייה.
+ב-`PlaceSnapshot` יש **זוגות** שקל לקרוא רק את חציָם:
+
+| שלפת | ויש גם |
+|---|---|
+| `category` | **`additionalCategories`** · `additionalCategoriesIds` · `mainCategoryId` |
+| `title` | `titleWordsCount` |
+| `description` | `descriptionWordsCount` · `ogDescription` |
+| `link` | `linkWordsCount` |
+
+**ואמת מול מקור שני.** ‏DataForSEO `business_data/google/my_business_info/live`
+מחזיר `category` ו-`additional_categories` בנפרד, ושתי הרשימות חייבות להתאים.
+
 ## שדה ריק אינו עובדה — נדרש לפני כל אבחנה
 
 **נמדד ב-20.9.2026, וזו הייתה טעות אמיתית בדוח:** Localo החזיר `phone: null`
