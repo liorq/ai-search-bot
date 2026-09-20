@@ -443,7 +443,9 @@ def find_cannibalisation(rows: Iterable[QueryRow], curve: CTRCurve) -> list[Oppo
             basis=(
                 f"{len(players)} דפים שלנו מדורגים על אותה שאילתה (מיקום "
                 + " ו-".join(f"{r.position:.0f}" for r in ranked)
-                + f"). ריכוז האות ב-{winner.url} מחזיר כ-{CONSOLIDATION_RECOVERY:.0%} מהפער"
+                + f"). אם שניהם מתחרים על אותה כוונה, בעלות ברורה ל-{winner.url} "
+                + f"שווה כ-{CONSOLIDATION_RECOVERY:.0%} מהפער. בדוק קודם שאין כאן "
+                + "פיצול תקין — שני דפים שכל אחד מנצח בקבוצת שאילתות משלו"
                 + ("" if clear else ". אין מנצח ברור במספרים — איזה דף יחזיק בשאילתה "
                                     "היא החלטת תוכן")
             ),
@@ -592,8 +594,10 @@ def _confidence(opportunity: Opportunity, curve: CTRCurve) -> tuple[str, str]:
         )
     if opportunity.kind == "cannibalised":
         return "medium", (
-            f"ריכוז האות בדף אחד מחזיר בדרך כלל את רוב הפער, לא את כולו; "
-            f"חושב לפי {CONSOLIDATION_RECOVERY:.0%} על {curve.describe()}"
+            f"האומדן מותנה בכך ששני הדפים מתחרים על אותה כוונה; "
+            f"חושב לפי {CONSOLIDATION_RECOVERY:.0%} על {curve.describe()}. "
+            "נמדד ב-20.9.2026 בזוג LED/red-light: כל דף ניצח בקבוצת שאילתות "
+            "אחרת, ואיחוד היה הורס אחד מהם"
         )
     if opportunity.kind == "coverage_gap":
         return "medium", (
